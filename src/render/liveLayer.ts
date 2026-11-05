@@ -52,6 +52,23 @@ export class LiveLayer {
     drawPenStroke(c, pen, color, size, this.pts, this.alpha)
   }
 
+  /** Eraser cursor: a circle outline of radius `rPx` (screen px) at screen position (sx, sy). */
+  cursor(sx: number, sy: number, rPx: number): void {
+    const c = this.ctx
+    if (!c) return
+    this.pts = []
+    c.setTransform(1, 0, 0, 1, 0, 0)
+    c.clearRect(0, 0, this.canvas.width, this.canvas.height)
+    c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0)
+    c.beginPath()
+    c.arc(sx, sy, rPx, 0, Math.PI * 2)
+    c.lineWidth = 1.5
+    c.strokeStyle = '#2060e0'
+    c.fillStyle = 'rgba(32,96,224,0.12)'
+    c.fill()
+    c.stroke()
+  }
+
   clear(): void {
     this.pts = []
     this.ctx?.setTransform(1, 0, 0, 1, 0, 0)

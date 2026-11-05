@@ -14,6 +14,9 @@ import type { Pt, StrokeObj } from './core/types'
 import { Renderer } from './render/renderer'
 import { PEN_DEFAULTS } from './render/pens'
 import { StrokeEraseSession } from './tools/strokeEraser'
+import { AreaEraseSession } from './tools/areaEraser'
+
+const AREA_RADIUS_PX = 20 // default; Task 13 makes this a setting (5-80)
 
 const updateSW = registerSW({
   onNeedRefresh: () => showUpdateBar(() => updateSW(true)),
@@ -102,6 +105,7 @@ function styleFor(): { color: string; size: number; alpha: number; pen: PenKind 
 
 /** Tool latched at strokeStart so a mid-stroke side-button change can't switch the action. */
 let eraseSession: StrokeEraseSession | null = null
+let areaSession: AreaEraseSession | null = null
 let current: { pen: PenKind; color: string; size: number; points: Pt[] } | null = null
 
 function commitStroke(): void {
@@ -137,17 +141,31 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
       case 'strokeStart': {
         const s = styleFor()
         live.clear()
+        const [wx, wy] = toWorld(vp, a.x, a.y)
+        if (toolState.tool === 'areaEraser') {
+          current = null
+          eraseSession = null
+          areaSession = new AreaEraseSession(doc, history)
+          areaSession.move(wx, wy, AREA_RADIUS_PX / vp.zoom)
+          live.cursor(a.x, a.y, AREA_RADIUS_PX)
+          break
+        }
         live.begin({ pen: s.pen, color: s.color, size: s.size }, s.alpha)
         live.add(a.x, a.y, a.p)
-        const [wx, wy] = toWorld(vp, a.x, a.y)
         current = isPen(toolState.tool)
           ? { pen: s.pen, color: s.color, size: s.size, points: [[wx, wy, a.p]] }
-          : null // area eraser only previews until Task 8
+          : null
         eraseSession = toolState.tool === 'strokeEraser' ? new StrokeEraseSession(doc, history) : null
         eraseSession?.move(wx, wy, 6 / vp.zoom)
         break
       }
       case 'strokeMove': {
+        if (areaSession) {
+          const [wx, wy] = toWorld(vp, a.x, a.y)
+          areaSession.move(wx, wy, AREA_RADIUS_PX / vp.zoom)
+          live.cursor(a.x, a.y, AREA_RADIUS_PX)
+          break
+        }
         live.add(a.x, a.y, a.p)
         if (eraseSession) {
           const [wx, wy] = toWorld(vp, a.x, a.y)
@@ -160,6 +178,14 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         break
       }
       case 'strokeEnd': {
+        if (areaSession) {
+          const [wx, wy] = toWorld(vp, a.x, a.y)
+          areaSession.move(wx, wy, AREA_RADIUS_PX / vp.zoom)
+          areaSession.end()
+          areaSession = null
+          live.clear()
+          break
+        }
         if (eraseSession) {
           const [wx, wy] = toWorld(vp, a.x, a.y)
           eraseSession.move(wx, wy, 6 / vp.zoom)
@@ -176,6 +202,8 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         break
       }
       case 'strokeCancel':
+        areaSession?.end() // already-cut objects stay cut, so keep them undoable
+        areaSession = null
         eraseSession?.end() // already-erased objects stay erased, so keep them undoable
         eraseSession = null
         current = null
@@ -187,8 +215,12 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
       case 'zoom':
         setView(zoomAt(vp, a.cx, a.cy, a.factor))
         break
+      case 'hover':
+        if (toolState.tool === 'areaEraser') live.cursor(a.x, a.y, AREA_RADIUS_PX)
+        else live.clear()
+        break
       default:
-        break // hover
+        break
     }
   }
 }
