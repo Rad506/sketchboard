@@ -33,6 +33,42 @@ afterEach(() => {
 })
 
 describe('Autosave', () => {
+  it('add -> write in flight -> replace -> remove still deletes in the db (no ghost)', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let n = 0;
+    const db = fakeDb(async () => {
+      if (++n === 1) await gate;
+    });
+    const a = new Autosave(db, 'b1', () => {});
+    a.queue([stroke('x')], []);
+    const first = a.flush(); // write for x is now in flight
+    await Promise.resolve();
+    a.queue([stroke('x')], []); // replace (e.g. text edit commit)
+    a.queue([], ['x']); // then erased
+    release();
+    await first;
+    await a.flush();
+    const calls = db.writeChanges.mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[1][2]).toEqual(['x']);
+    expect(calls[1][1]).toEqual([]);
+  });
+  it('rolls the in-flight ids back out of persisted if the write fails', async () => {
+    let fail = true;
+    const db = fakeDb(async () => {
+      if (fail) throw new Error('quota');
+    });
+    const a = new Autosave(db, 'b1', () => {});
+    a.queue([stroke('y')], []);
+    await a.flush();
+    a.queue([], ['y']); // add+remove cancel out: y never reached the db
+    fail = false;
+    await vi.advanceTimersByTimeAsync(5000);
+    await a.flush();
+    const sent = db.writeChanges.mock.calls.slice(1).flatMap((c) => c[2] as string[]);
+    expect(sent).toEqual([]);
+  });
   it('debounces 500ms and merges add+remove of same id to nothing', async () => {
     const db = fakeDb()
     const a = new Autosave(db, 'b1', () => {})

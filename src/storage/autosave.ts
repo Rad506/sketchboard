@@ -82,16 +82,20 @@ export class Autosave {
       if (o) added.push(o)
       else removed.push(id)
     }
+    // Mark the batch's adds as persisted as soon as the write STARTS: an add -> remove that lands while
+    // it is in flight must still send a delete (otherwise the object is left behind in the db).
+    const fresh = added.filter((o) => !this.persisted.has(o.id)).map((o) => o.id)
+    for (const id of fresh) this.persisted.add(id)
     try {
       await this.db.writeChanges(this.boardId, added, removed)
     } catch {
+      for (const id of fresh) this.persisted.delete(id) // the write failed, so the db doesn't hold them
       for (const [id, o] of batch) if (!this.pending.has(id)) this.pending.set(id, o) // newer entries win
       if (this.disposed) return
       this.setStatus('unavailable')
       this.arm(RETRY_MS)
       return
     }
-    for (const o of added) this.persisted.add(o.id)
     for (const id of removed) this.persisted.delete(id)
     this.setStatus('ok')
   }
