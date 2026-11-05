@@ -5,7 +5,14 @@ import { renderToolBadge } from './ui/toolBadge'
 import { LiveLayer } from './render/liveLayer'
 import { InputRouter, type RouterEvent } from './input/router'
 import { SideButtonDetector, type PenSample } from './input/sideButton'
-import { applySideGesture, type ToolState } from './core/toolState'
+import { applySideGesture, selectTool, type PenKind, type Tool, type ToolState } from './core/toolState'
+import { BoardDoc } from './core/board'
+import { History } from './core/history'
+import { bboxOf, newId } from './core/geometry'
+import { panBy, toWorld, zoomAt, type Viewport } from './core/viewport'
+import type { Pt, StrokeObj } from './core/types'
+import { Renderer } from './render/renderer'
+import { PEN_DEFAULTS } from './render/pens'
 
 const updateSW = registerSW({
   onNeedRefresh: () => showUpdateBar(() => updateSW(true)),
@@ -23,6 +30,16 @@ const badge = document.getElementById('badge') as HTMLElement
 const mainCanvas = document.getElementById('main-canvas') as HTMLCanvasElement
 const liveCanvas = document.getElementById('live-canvas') as HTMLCanvasElement
 const live = new LiveLayer(liveCanvas)
+const doc = new BoardDoc()
+const history = new History(doc)
+const renderer = new Renderer(mainCanvas, doc)
+let vp: Viewport = { x: 0, y: 0, zoom: 1 }
+
+function setView(next: Viewport): void {
+  vp = next
+  live.setViewport(vp)
+  renderer.setViewport(vp)
+}
 
 function resize(): void {
   const dpr = window.devicePixelRatio || 1
@@ -35,6 +52,7 @@ function resize(): void {
     c.style.height = `${h}px`
   }
   live.setDpr(dpr)
+  renderer.requestDraw()
 }
 window.addEventListener('resize', resize)
 window.addEventListener('orientationchange', resize)
@@ -51,6 +69,17 @@ const router = new InputRouter({ fingerDraw: () => false })
 
 board.addEventListener('contextmenu', (e) => e.preventDefault())
 
+const isPen = (t: Tool): t is PenKind => t === 'ink' || t === 'felt' || t === 'highlighter'
+
+// Temporary key bindings until the toolbar (Task 13): 1 ink, 2 felt, 3 highlighter.
+const KEY_TOOLS: Record<string, PenKind> = { '1': 'ink', '2': 'felt', '3': 'highlighter' }
+window.addEventListener('keydown', (e) => {
+  const pen = KEY_TOOLS[e.key]
+  if (!pen) return
+  toolState = selectTool(toolState, pen)
+  renderToolBadge(badge, toolState.tool)
+})
+
 function toSample(e: PointerEvent): PenSample {
   return {
     type: e.type as PenSample['type'],
@@ -62,38 +91,87 @@ function toSample(e: PointerEvent): PenSample {
   }
 }
 
-function styleFor(): { color: string; size: number; alpha: number } {
-  switch (toolState.tool) {
-    case 'strokeEraser':
-      return { color: '#e02020', size: 2, alpha: 1 }
-    case 'areaEraser':
-      return { color: '#2060e0', size: 40, alpha: 0.35 }
-    default:
-      return { color: '#000000', size: 3, alpha: 1 }
-  }
+/** Pen sizes are world units; eraser previews are screen px, so they divide by zoom. */
+function styleFor(): { color: string; size: number; alpha: number; pen: PenKind } {
+  const t = toolState.tool
+  if (isPen(t)) return { ...PEN_DEFAULTS[t], alpha: 1, pen: t }
+  if (t === 'strokeEraser') return { color: '#e02020', size: 2 / vp.zoom, alpha: 1, pen: 'felt' }
+  return { color: '#2060e0', size: 40 / vp.zoom, alpha: 0.35, pen: 'felt' }
 }
 
+let current: { pen: PenKind; color: string; size: number; points: Pt[] } | null = null
+
+function commitStroke(): void {
+  const cur = current
+  current = null
+  if (!cur || cur.points.length === 0) return
+  const base = {
+    kind: 'stroke' as const,
+    id: newId(),
+    createdAt: Date.now(),
+    pen: cur.pen,
+    color: cur.color,
+    size: cur.size,
+    points: cur.points,
+  }
+  const obj: StrokeObj = { ...base, bbox: bboxOf(base) }
+  history.apply({ add: [obj], remove: [] })
+}
+
+/** `ev` may be a coalesced sub-event: it contributes its own coordinates, pressure, buttons and time. */
 function dispatch(e: PointerEvent, ev: PointerEvent): void {
   const rect = board.getBoundingClientRect()
-  const re: RouterEvent = { ...toSample(e), x: ev.clientX - rect.left, y: ev.clientY - rect.top }
+  const re: RouterEvent = {
+    ...toSample(ev),
+    type: e.type as PenSample['type'],
+    pointerId: e.pointerId,
+    pointerType: e.pointerType,
+    x: ev.clientX - rect.left,
+    y: ev.clientY - rect.top,
+  }
   for (const a of router.handle(re)) {
     switch (a.kind) {
       case 'strokeStart': {
         const s = styleFor()
         live.clear()
-        live.begin({ pen: toolState.lastPen, color: s.color, size: s.size }, s.alpha)
+        live.begin({ pen: s.pen, color: s.color, size: s.size }, s.alpha)
         live.add(a.x, a.y, a.p)
+        const [wx, wy] = toWorld(vp, a.x, a.y)
+        current = isPen(toolState.tool)
+          ? { pen: s.pen, color: s.color, size: s.size, points: [[wx, wy, a.p]] }
+          : null // erasers only preview until Tasks 7-8
         break
       }
-      case 'strokeMove':
+      case 'strokeMove': {
         live.add(a.x, a.y, a.p)
+        if (current) {
+          const [wx, wy] = toWorld(vp, a.x, a.y)
+          current.points.push([wx, wy, a.p])
+        }
         break
-      case 'strokeEnd':
+      }
+      case 'strokeEnd': {
+        if (current) {
+          const [wx, wy] = toWorld(vp, a.x, a.y)
+          const last = current.points[current.points.length - 1]
+          if (last[0] !== wx || last[1] !== wy) current.points.push([wx, wy, last[2]]) // pointerup reports pressure 0
+        }
+        commitStroke()
+        live.clear()
+        break
+      }
       case 'strokeCancel':
-        live.clear() // nothing is committed yet (Task 5-6)
+        current = null
+        live.clear()
+        break
+      case 'pan':
+        setView(panBy(vp, a.dx, a.dy))
+        break
+      case 'zoom':
+        setView(zoomAt(vp, a.cx, a.cy, a.factor))
         break
       default:
-        break // pan / zoom / hover: no main-canvas content yet
+        break // hover
     }
   }
 }
