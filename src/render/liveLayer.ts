@@ -1,7 +1,7 @@
 import type { PenKind } from '../core/toolState'
-import type { Pt } from '../core/types'
+import type { BoardObject, Pt } from '../core/types'
 import { toWorld, type Viewport } from '../core/viewport'
-import { drawPenStroke } from './pens'
+import { drawObject, drawPenStroke } from './pens'
 
 /** `size` is in world units (same as StrokeObj.size), so preview and commit match. */
 export type StrokeStyle = { pen: PenKind; color: string; size: number }
@@ -15,6 +15,7 @@ export class LiveLayer {
   private pts: Pt[] = []
   private style: StrokeStyle = { pen: 'ink', color: '#000000', size: 3 }
   private alpha = 1
+  private preview: BoardObject | null = null
   private dpr = 1
   private vp: Viewport = { x: 0, y: 0, zoom: 1 }
 
@@ -28,6 +29,7 @@ export class LiveLayer {
     this.style = style
     this.alpha = alpha
     this.pts = []
+    this.preview = null
   }
 
   setViewport(vp: Viewport): void {
@@ -48,8 +50,18 @@ export class LiveLayer {
     c.setTransform(1, 0, 0, 1, 0, 0)
     c.clearRect(0, 0, this.canvas.width, this.canvas.height)
     c.setTransform(k, 0, 0, k, -x * k, -y * k)
+    if (this.preview) {
+      drawObject(c, this.preview)
+      return
+    }
     const { pen, color, size } = this.style
     drawPenStroke(c, pen, color, size, this.pts, this.alpha)
+  }
+
+  /** Show a clean snapped object instead of the raw stroke; null goes back to the raw stroke. */
+  setPreview(o: BoardObject | null): void {
+    this.preview = o
+    this.paint()
   }
 
   /** Eraser cursor: a circle outline of radius `rPx` (screen px) at screen position (sx, sy). */
@@ -71,6 +83,7 @@ export class LiveLayer {
 
   clear(): void {
     this.pts = []
+    this.preview = null
     this.ctx?.setTransform(1, 0, 0, 1, 0, 0)
     this.ctx?.clearRect(0, 0, this.canvas.width, this.canvas.height)
   }

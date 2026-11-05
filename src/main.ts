@@ -15,6 +15,7 @@ import { Renderer } from './render/renderer'
 import { PEN_DEFAULTS } from './render/pens'
 import { StrokeEraseSession } from './tools/strokeEraser'
 import { AreaEraseSession } from './tools/areaEraser'
+import { SnapController, recognizedToObject, commitStroke } from './tools/snapController'
 
 const AREA_RADIUS_PX = 20 // default; Task 13 makes this a setting (5-80)
 
@@ -78,6 +79,13 @@ const isPen = (t: Tool): t is PenKind => t === 'ink' || t === 'felt' || t === 'h
 // Temporary key bindings until the toolbar (Task 13): 1 ink, 2 felt, 3 highlighter.
 const KEY_TOOLS: Record<string, PenKind> = { '1': 'ink', '2': 'felt', '3': 'highlighter' }
 window.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'y')) {
+    e.preventDefault()
+    if (e.key === 'z') history.undo()
+    else history.redo()
+    renderer.requestDraw()
+    return
+  }
   const pen = KEY_TOOLS[e.key]
   if (!pen) return
   toolState = selectTool(toolState, pen)
@@ -108,7 +116,15 @@ let eraseSession: StrokeEraseSession | null = null
 let areaSession: AreaEraseSession | null = null
 let current: { pen: PenKind; color: string; size: number; points: Pt[] } | null = null
 
-function commitStroke(): void {
+/** World x/y of the current stroke, kept in step with current.points so each sample is O(1). */
+let currentXY: [number, number][] = []
+
+const snap = new SnapController((r) => {
+  if (!current) return
+  live.setPreview(r ? recognizedToObject(r, current) : null)
+})
+
+function commitCurrent(): void {
   const cur = current
   current = null
   if (!cur || cur.points.length === 0) return
@@ -122,7 +138,9 @@ function commitStroke(): void {
     points: cur.points,
   }
   const obj: StrokeObj = { ...base, bbox: bboxOf(base) }
-  history.apply({ add: [obj], remove: [] })
+  const r = snap.current()
+  snap.cancel()
+  commitStroke(history, obj, r ? recognizedToObject(r, cur) : null)
 }
 
 /** `ev` may be a coalesced sub-event: it contributes its own coordinates, pressure, buttons and time. */
@@ -157,6 +175,9 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
           : null
         eraseSession = toolState.tool === 'strokeEraser' ? new StrokeEraseSession(doc, history) : null
         eraseSession?.move(wx, wy, 6 / vp.zoom)
+        snap.cancel()
+        currentXY = [[wx, wy]]
+        if (current) snap.sample(a.x, a.y, ev.timeStamp, currentXY)
         break
       }
       case 'strokeMove': {
@@ -174,6 +195,8 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         if (current) {
           const [wx, wy] = toWorld(vp, a.x, a.y)
           current.points.push([wx, wy, a.p])
+          currentXY.push([wx, wy])
+          snap.sample(a.x, a.y, ev.timeStamp, currentXY)
         }
         break
       }
@@ -197,7 +220,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
           const last = current.points[current.points.length - 1]
           if (last[0] !== wx || last[1] !== wy) current.points.push([wx, wy, last[2]]) // pointerup reports pressure 0
         }
-        commitStroke()
+        commitCurrent()
         live.clear()
         break
       }
@@ -207,6 +230,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         eraseSession?.end() // already-erased objects stay erased, so keep them undoable
         eraseSession = null
         current = null
+        snap.cancel()
         live.clear()
         break
       case 'pan':
