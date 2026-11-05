@@ -33,6 +33,9 @@ import {
   renameBoard,
   saveViewport,
 } from './core/boards'
+import { exportRect, renderPng, shareFileName, shareOrDownload } from './export/sharePng'
+import { chooseShareMode } from './ui/shareSheet'
+import { showToast } from './ui/toast'
 import { SnapController, recognizedToObject, commitStroke } from './tools/snapController'
 
 const TAP_SLOP_PX = 6
@@ -570,6 +573,30 @@ async function deleteCurrent(): Promise<void> {
   }
 }
 
+async function shareBoard(): Promise<void> {
+  commitOpenEdit?.()
+  const mode = await chooseShareMode()
+  if (!mode) return
+  if (doc.all().length === 0) {
+    showToast('Nothing to share yet')
+    return
+  }
+  const dpr = window.devicePixelRatio || 1
+  const rect = exportRect(contentBounds(doc), mode, vp, board.clientWidth, board.clientHeight, dpr)
+  if (!rect) {
+    showToast('Nothing to share yet')
+    return
+  }
+  try {
+    const blob = await renderPng(doc, rect)
+    if (rect.capped) showToast('Board is large — text may be small; try Current view', 4000)
+    const name = shareFileName(active?.meta.name ?? 'Sketchboard', new Date())
+    await shareOrDownload(blob, name)
+  } catch {
+    showToast('Could not create the image')
+  }
+}
+
 function menuItems(): MenuItem[] {
   const items: MenuItem[] = [
     { label: 'Fit to content', onSelect: fitContent },
@@ -586,7 +613,7 @@ function menuItems(): MenuItem[] {
     items.push({ label: 'Rename', onSelect: () => void renameCurrent() })
     items.push({ label: 'Delete', danger: true, onSelect: () => void deleteCurrent() })
   }
-  // Task 16: append the "Share" item here.
+  items.push({ label: 'Share', onSelect: () => void shareBoard() })
   return items
 }
 
