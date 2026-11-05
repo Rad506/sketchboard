@@ -1,0 +1,127 @@
+<title>S Pen Button Test</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: one-screen tool — tool badge + checklist on top, drawing pad fills the rest, log at bottom */
+:root {
+  --bg: #f3f5f8; --surface: #ffffff; --fg: #17202b; --muted: #5d6a7a;
+  --line: #d5dbe3; --accent: #1f5fd6; --ok: #17803d; --warn: #b4232c; --ink: #17202b;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --sans: "IBM Plex Sans", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #11161d; --surface: #1a212b; --fg: #e6ebf1; --muted: #93a0b0;
+  --line: #2c3643; --accent: #6b9cff; --ok: #4fc27a; --warn: #ff6b73; --ink: #e6ebf1; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #11161d; --surface: #1a212b; --fg: #e6ebf1; --muted: #93a0b0;
+  --line: #2c3643; --accent: #6b9cff; --ok: #4fc27a; --warn: #ff6b73; --ink: #e6ebf1; color-scheme: dark }
+html, body { height: 100%; }
+body { background: var(--bg); color: var(--fg); font-family: var(--sans); display: flex; flex-direction: column;
+  padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px));
+  padding-block: 8px; gap: 8px; box-sizing: border-box; overscroll-behavior: none; }
+h1 { font-size: 16px; margin: 0; text-wrap: balance; }
+.top { display: flex; flex-direction: column; gap: 6px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+#tool { font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 999px; border: 2px solid var(--line); }
+#tool.t-pen { color: var(--fg); } #tool.t-stroke { color: var(--warn); border-color: var(--warn); } #tool.t-area { color: var(--accent); border-color: var(--accent); }
+.checks { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 4px 10px; font-size: 13px; }
+.chk { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.dot { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--line); flex: none; }
+.chk.pass .dot { background: var(--ok); border-color: var(--ok); }
+#pad { flex: 1; min-height: 200px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+  touch-action: none; position: relative; overflow: hidden; -webkit-user-select: none; user-select: none; }
+canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.hint { position: absolute; inset: auto 8px 8px; text-align: center; font-size: 12px; color: var(--muted); pointer-events: none; }
+.bar { display: flex; gap: 8px; flex-wrap: wrap; }
+button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--surface); color: var(--fg); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#log { font-family: var(--mono); font-size: 11px; height: 80px; overflow: auto; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px; margin: 0; white-space: pre; }
+#summary { width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 11px; height: 50px; }
+</style>
+
+<div class="top">
+  <div class="row">
+    <h1>S Pen gesture test · v6</h1>
+    <span id="tool" class="t-pen">Pen</span>
+  </div>
+  <div class="checks">
+    <div class="chk" data-k="pen"><span class="dot"></span>Pen line (black)</div>
+    <div class="chk" data-k="stroke"><span class="dot"></span>Stroke eraser line (red)</div>
+    <div class="chk" data-k="area"><span class="dot"></span>Area eraser line (blue)</div>
+    <div class="chk" data-k="back"><span class="dot"></span>Clicked back to pen</div>
+  </div>
+</div>
+
+<div id="pad">
+  <canvas id="cv"></canvas>
+  <div class="hint">Click the side button once in the air → red eraser · double-click → blue eraser · click again → back to pen. Erasers only act with the tip on the glass.</div>
+</div>
+
+<div class="bar">
+  <button id="clear" type="button">Clear pad</button>
+  <button id="copy" type="button">Copy results</button>
+</div>
+<pre id="log"></pre>
+<textarea id="summary" readonly aria-label="Results summary"></textarea>
+
+<script>
+(() => {
+  const pad = document.getElementById('pad'), cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  const toolEl = document.getElementById('tool'), logEl = document.getElementById('log'), sumEl = document.getElementById('summary');
+  const state = { pen:false, stroke:false, area:false, back:false };
+  const DBL_MS = 400, CLICK_MAX_MS = 600;
+  const LABEL = { pen:'Pen', stroke:'Stroke eraser', area:'Area eraser' };
+  let lines = [], tool = 'pen';
+  // side button is only visible while hovering: hover pointer reports buttons=1 with pressure 0
+  let btnDown = false, downAt = 0, pendingClick = null, stroke = null;
+
+  function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+  function size(){ const r = pad.getBoundingClientRect(), d = devicePixelRatio || 1;
+    cv.width = r.width*d; cv.height = r.height*d; ctx.setTransform(d,0,0,d,0,0); }
+  size(); addEventListener('resize', size);
+  function log(s){ lines.push((performance.now()/1000).toFixed(2)+'  '+s); if (lines.length > 150) lines.shift();
+    logEl.textContent = lines.slice().reverse().join('\n'); summary(); }
+  function mark(k){ if (!state[k]) { state[k] = true; document.querySelector('[data-k="'+k+'"]').classList.add('pass'); } summary(); }
+  function summary(){ sumEl.value = 'v6 UA: '+navigator.userAgent+'\nchecks: '+JSON.stringify(state)+'\nlast log:\n'+lines.slice(-30).join('\n'); }
+
+  function setTool(t){
+    if (t === tool) t = 'pen';            // clicking the same gesture again toggles back to the pen
+    if (t === 'pen' && tool !== 'pen') mark('back');
+    tool = t; toolEl.textContent = LABEL[t]; toolEl.className = 't-'+t; log('tool → '+t);
+  }
+  function onClick(){
+    if (pendingClick) { clearTimeout(pendingClick); pendingClick = null; log('double-click'); setTool('area'); return; }
+    pendingClick = setTimeout(() => { pendingClick = null; log('single click'); setTool('stroke'); }, DBL_MS);
+  }
+
+  function onPtr(e){
+    e.preventDefault();
+    if (e.pointerType !== 'pen') return;
+    const r = pad.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    const contact = e.pressure > 0 || (stroke && e.pointerId === stroke.id);
+
+    if (!contact) {
+      if (e.type === 'pointerleave') return;
+      const held = (e.buttons & 1) === 1;
+      if (held && !btnDown) { btnDown = true; downAt = performance.now(); }
+      else if (!held && btnDown) { btnDown = false; if (performance.now() - downAt < CLICK_MAX_MS) onClick(); else log('long press ignored'); }
+      return;
+    }
+    if (!stroke) { stroke = { id: e.pointerId, last: {x,y} }; return; }
+    if (e.type === 'pointermove') {
+      ctx.strokeStyle = tool === 'pen' ? css('--ink') : tool === 'stroke' ? css('--warn') : css('--accent');
+      ctx.lineCap = 'round'; ctx.lineWidth = tool === 'area' ? 24 : 1 + e.pressure*8; ctx.globalAlpha = tool === 'area' ? 0.35 : 1;
+      ctx.beginPath(); ctx.moveTo(stroke.last.x, stroke.last.y); ctx.lineTo(x,y); ctx.stroke(); ctx.globalAlpha = 1;
+      stroke.last = {x,y};
+    }
+    if (e.type === 'pointerup' || e.type === 'pointercancel') { mark(tool); log('line drawn with '+tool); stroke = null; }
+  }
+  ['pointerdown','pointermove','pointerup','pointercancel','pointerleave'].forEach(t => pad.addEventListener(t, onPtr, {passive:false}));
+  ['contextmenu','click','dblclick'].forEach(t => pad.addEventListener(t, e => e.preventDefault()));
+  document.getElementById('clear').onclick = () => ctx.clearRect(0,0,cv.width,cv.height);
+  document.getElementById('copy').onclick = () => { summary();
+    navigator.clipboard.writeText(sumEl.value).then(() => log('copied results'), () => { sumEl.focus(); sumEl.select(); }); };
+  summary();
+})();
+</script>
