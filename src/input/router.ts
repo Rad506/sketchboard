@@ -43,6 +43,19 @@ export class InputRouter {
     return { kind, x: e.x, y: e.y, p: this.pressureOf(e), t: e.t };
   }
 
+  /** Close whatever is open (app hidden without a pointercancel): end the pen stroke / cancel a finger stroke, forget all pointers. */
+  reset(): RouterAction[] {
+    const out: RouterAction[] = [];
+    if (this.penId !== null && this.lastPen) out.push({ kind: 'strokeEnd', ...this.lastPen });
+    else if (this.mode === 'touchDraw') out.push({ kind: 'strokeCancel' });
+    this.penId = null;
+    this.lastPen = null;
+    this.touches.clear();
+    this.touchDrawId = null;
+    this.mode = 'idle';
+    return out;
+  }
+
   private pen(e: RouterEvent): RouterAction[] {
     const out: RouterAction[] = [];
     const active = this.penId !== null;
@@ -51,6 +64,7 @@ export class InputRouter {
     if (e.type === 'pointerup' || e.type === 'pointercancel') {
       if (mine) {
         this.penId = null;
+        this.lastPen = null;
         out.push({ kind: 'strokeEnd', x: e.x, y: e.y, p: this.pressureOf(e) || 0, t: e.t });
       }
       return out;
@@ -60,10 +74,18 @@ export class InputRouter {
     if (mine) {
       if (e.type === 'pointermove' && this.contact(e)) {
         out.push(this.act('strokeMove', e));
+        this.lastPen = { x: e.x, y: e.y, p: this.pressureOf(e), t: e.t };
+        this.lastPen = { x: e.x, y: e.y, p: this.pressureOf(e), t: e.t };
       }
       return out;
     }
-    if (active) return out;
+    if (active) {
+      // a different pen pointer touching down means the old stroke lost its pointerup: close it, then start the new one
+      if (!(e.type === 'pointerdown' && this.contact(e)) || !this.lastPen) return out;
+      out.push({ kind: 'strokeEnd', ...this.lastPen });
+      this.penId = null;
+      this.lastPen = null;
+    }
 
     if (this.contact(e)) {
       if (e.type === 'pointerdown' || e.type === 'pointermove') {
@@ -72,6 +94,7 @@ export class InputRouter {
         this.touchDrawId = null;
         this.penId = e.pointerId;
         out.push(this.act('strokeStart', e));
+        this.lastPen = { x: e.x, y: e.y, p: this.pressureOf(e), t: e.t };
       }
     } else {
       out.push({ kind: 'hover', x: e.x, y: e.y });

@@ -102,4 +102,35 @@ describe('InputRouter', () => {
     r.handle(ev('pointerdown', 5, 'touch', 200, 100));
     expect(r.handle(ev('pointermove', 5, 'touch', 220, 100)).length).toBeGreaterThan(0);
   });
+
+  it('a pen pointerdown with a new id ends the old stroke at its last point, then starts the new one', () => {
+    const r = mk();
+    r.handle(ev('pointerdown', 1, 'pen', 10, 10));
+    r.handle(ev('pointermove', 1, 'pen', 20, 25, 0.7));
+    const out = r.handle(ev('pointerdown', 2, 'pen', 90, 90, 0.3));
+    expect(out).toHaveLength(2);
+    expect(out[0]).toMatchObject({ kind: 'strokeEnd', x: 20, y: 25, p: 0.7 });
+    expect(out[1]).toMatchObject({ kind: 'strokeStart', x: 90, y: 90, p: 0.3 });
+    expect(r.handle(ev('pointermove', 2, 'pen', 95, 95))[0]).toMatchObject({ kind: 'strokeMove' });
+    expect(r.handle(ev('pointerup', 1, 'pen', 0, 0, 0, 0))).toEqual([]); // stale id is ignored
+  });
+
+  it('reset() ends an active pen stroke at its last point and leaves the router idle', () => {
+    const r = mk();
+    r.handle(ev('pointerdown', 1, 'pen', 10, 10));
+    r.handle(ev('pointermove', 1, 'pen', 30, 40));
+    expect(r.reset()).toEqual([{ kind: 'strokeEnd', x: 30, y: 40, p: 0.5, t: expect.any(Number) }]);
+    expect(r.reset()).toEqual([]);
+    expect(r.handle(ev('pointerdown', 3, 'pen', 5, 5))[0]).toMatchObject({ kind: 'strokeStart' });
+  });
+
+  it('reset() cancels a finger stroke and forgets ghost touches', () => {
+    const r = mk(true);
+    r.handle(ev('pointerdown', 1, 'touch', 10, 10));
+    expect(r.reset()).toEqual([{ kind: 'strokeCancel' }]);
+    r.handle(ev('pointerdown', 2, 'touch', 50, 50));
+    r.reset();
+    // fresh finger after reset starts a stroke again (no stale touch count)
+    expect(r.handle(ev('pointerdown', 3, 'touch', 7, 7))[0]).toMatchObject({ kind: 'strokeStart' });
+  });
 });
