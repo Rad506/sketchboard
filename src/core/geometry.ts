@@ -120,3 +120,19 @@ export function outlineOf(o: BoardObject): [number, number][][] {
 export function newId(): string {
   return crypto.randomUUID();
 }
+
+/** Minimum distance between segments a1->a2 and b1->b2 (0 if they cross). */
+export function segSegDist(
+  a1x: number, a1y: number, a2x: number, a2y: number,
+  b1x: number, b1y: number, b2x: number, b2y: number,
+): number {
+  const o = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) =>
+    Math.sign((qx - px) * (ry - py) - (qy - py) * (rx - px));
+  const d1 = o(a1x, a1y, a2x, a2y, b1x, b1y), d2 = o(a1x, a1y, a2x, a2y, b2x, b2y);
+  const d3 = o(b1x, b1y, b2x, b2y, a1x, a1y), d4 = o(b1x, b1y, b2x, b2y, a2x, a2y);
+  if (d1 * d2 < 0 && d3 * d4 < 0) return 0;
+  return Math.min(
+    distPointSeg(a1x, a1y, b1x, b1y, b2x, b2y), distPointSeg(a2x, a2y, b1x, b1y, b2x, b2y),
+    distPointSeg(b1x, b1y, a1x, a1y, a2x, a2y), distPointSeg(b2x, b2y, a1x, a1y, a2x, a2y),
+  );
+}

@@ -13,6 +13,7 @@ import { panBy, toWorld, zoomAt, type Viewport } from './core/viewport'
 import type { Pt, StrokeObj } from './core/types'
 import { Renderer } from './render/renderer'
 import { PEN_DEFAULTS } from './render/pens'
+import { StrokeEraseSession } from './tools/strokeEraser'
 
 const updateSW = registerSW({
   onNeedRefresh: () => showUpdateBar(() => updateSW(true)),
@@ -99,6 +100,8 @@ function styleFor(): { color: string; size: number; alpha: number; pen: PenKind 
   return { color: '#2060e0', size: 40 / vp.zoom, alpha: 0.35, pen: 'felt' }
 }
 
+/** Tool latched at strokeStart so a mid-stroke side-button change can't switch the action. */
+let eraseSession: StrokeEraseSession | null = null
 let current: { pen: PenKind; color: string; size: number; points: Pt[] } | null = null
 
 function commitStroke(): void {
@@ -139,11 +142,17 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         const [wx, wy] = toWorld(vp, a.x, a.y)
         current = isPen(toolState.tool)
           ? { pen: s.pen, color: s.color, size: s.size, points: [[wx, wy, a.p]] }
-          : null // erasers only preview until Tasks 7-8
+          : null // area eraser only previews until Task 8
+        eraseSession = toolState.tool === 'strokeEraser' ? new StrokeEraseSession(doc, history) : null
+        eraseSession?.move(wx, wy, 6 / vp.zoom)
         break
       }
       case 'strokeMove': {
         live.add(a.x, a.y, a.p)
+        if (eraseSession) {
+          const [wx, wy] = toWorld(vp, a.x, a.y)
+          eraseSession.move(wx, wy, 6 / vp.zoom)
+        }
         if (current) {
           const [wx, wy] = toWorld(vp, a.x, a.y)
           current.points.push([wx, wy, a.p])
@@ -151,6 +160,12 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         break
       }
       case 'strokeEnd': {
+        if (eraseSession) {
+          const [wx, wy] = toWorld(vp, a.x, a.y)
+          eraseSession.move(wx, wy, 6 / vp.zoom)
+          eraseSession.end()
+          eraseSession = null
+        }
         if (current) {
           const [wx, wy] = toWorld(vp, a.x, a.y)
           const last = current.points[current.points.length - 1]
@@ -161,6 +176,8 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         break
       }
       case 'strokeCancel':
+        eraseSession?.end() // already-erased objects stay erased, so keep them undoable
+        eraseSession = null
         current = null
         live.clear()
         break
