@@ -2,7 +2,7 @@ import './style.css'
 import { registerSW } from 'virtual:pwa-register'
 import { showUpdateBar } from './ui/updateBar'
 import { renderToolBadge } from './ui/toolBadge'
-import { LiveLayer } from './render/liveLayer'
+import { LiveLayer, type StrokeStyle } from './render/liveLayer'
 import { InputRouter, type RouterEvent } from './input/router'
 import { SideButtonDetector, type PenSample } from './input/sideButton'
 import { applySideGesture, selectTool, type PenKind, type Tool, type ToolState } from './core/toolState'
@@ -15,6 +15,7 @@ import { Renderer } from './render/renderer'
 import { PEN_DEFAULTS } from './render/pens'
 import { StrokeEraseSession } from './tools/strokeEraser'
 import { AreaEraseSession } from './tools/areaEraser'
+import { dragToObject, type ShapeToolKind } from './tools/shapeTool'
 import { SnapController, recognizedToObject, commitStroke } from './tools/snapController'
 
 const AREA_RADIUS_PX = 20 // default; Task 13 makes this a setting (5-80)
@@ -76,8 +77,10 @@ board.addEventListener('contextmenu', (e) => e.preventDefault())
 
 const isPen = (t: Tool): t is PenKind => t === 'ink' || t === 'felt' || t === 'highlighter'
 
-// Temporary key bindings until the toolbar (Task 13): 1 ink, 2 felt, 3 highlighter.
-const KEY_TOOLS: Record<string, PenKind> = { '1': 'ink', '2': 'felt', '3': 'highlighter' }
+// Temporary key bindings until the toolbar (Task 13): 1 ink, 2 felt, 3 highlighter, 4 ellipse, 5 triangle, 6 rect, 7 arrow.
+const KEY_TOOLS: Record<string, Tool> = {
+  '1': 'ink', '2': 'felt', '3': 'highlighter', '4': 'ellipse', '5': 'triangle', '6': 'rect', '7': 'arrow',
+}
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'y')) {
     e.preventDefault()
@@ -86,9 +89,9 @@ window.addEventListener('keydown', (e) => {
     renderer.requestDraw()
     return
   }
-  const pen = KEY_TOOLS[e.key]
-  if (!pen) return
-  toolState = selectTool(toolState, pen)
+  const tool = KEY_TOOLS[e.key]
+  if (!tool) return
+  toolState = selectTool(toolState, tool)
   renderToolBadge(badge, toolState.tool)
 })
 
@@ -114,6 +117,18 @@ function styleFor(): { color: string; size: number; alpha: number; pen: PenKind 
 /** Tool latched at strokeStart so a mid-stroke side-button change can't switch the action. */
 let eraseSession: StrokeEraseSession | null = null
 let areaSession: AreaEraseSession | null = null
+const isShapeTool = (t: Tool): t is ShapeToolKind =>
+  t === 'ellipse' || t === 'triangle' || t === 'rect' || t === 'arrow'
+
+/** Manual shape drag: world start point plus the tool latched at strokeStart. */
+let shapeDrag: { tool: ShapeToolKind; a: [number, number] } | null = null
+
+/** Shapes use the last pen's current style (pen defaults until Task 13 wires Settings). */
+function shapeStyle(): StrokeStyle {
+  const pen = toolState.lastPen
+  return { pen, color: PEN_DEFAULTS[pen].color, size: PEN_DEFAULTS[pen].size }
+}
+
 let current: { pen: PenKind; color: string; size: number; points: Pt[] } | null = null
 
 /** World x/y of the current stroke, kept in step with current.points so each sample is O(1). */
@@ -168,6 +183,14 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
           live.cursor(a.x, a.y, AREA_RADIUS_PX)
           break
         }
+        if (isShapeTool(toolState.tool)) {
+          current = null
+          eraseSession = null
+          snap.cancel()
+          shapeDrag = { tool: toolState.tool, a: [wx, wy] }
+          live.begin(shapeStyle(), 1)
+          break
+        }
         live.begin({ pen: s.pen, color: s.color, size: s.size }, s.alpha)
         live.add(a.x, a.y, a.p)
         current = isPen(toolState.tool)
@@ -181,6 +204,11 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         break
       }
       case 'strokeMove': {
+        if (shapeDrag) {
+          const [wx, wy] = toWorld(vp, a.x, a.y)
+          live.setPreview(dragToObject(shapeDrag.tool, shapeDrag.a, [wx, wy], shapeStyle()))
+          break
+        }
         if (areaSession) {
           const [wx, wy] = toWorld(vp, a.x, a.y)
           areaSession.move(wx, wy, AREA_RADIUS_PX / vp.zoom)
@@ -201,6 +229,14 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         break
       }
       case 'strokeEnd': {
+        if (shapeDrag) {
+          const [wx, wy] = toWorld(vp, a.x, a.y)
+          const obj = dragToObject(shapeDrag.tool, shapeDrag.a, [wx, wy], shapeStyle())
+          shapeDrag = null
+          if (obj) history.apply({ add: [obj], remove: [] })
+          live.clear()
+          break
+        }
         if (areaSession) {
           const [wx, wy] = toWorld(vp, a.x, a.y)
           areaSession.move(wx, wy, AREA_RADIUS_PX / vp.zoom)
@@ -225,6 +261,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         break
       }
       case 'strokeCancel':
+        shapeDrag = null
         areaSession?.end() // already-cut objects stay cut, so keep them undoable
         areaSession = null
         eraseSession?.end() // already-erased objects stay erased, so keep them undoable
