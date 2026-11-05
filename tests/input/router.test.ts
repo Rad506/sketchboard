@@ -35,7 +35,7 @@ describe('InputRouter', () => {
     const r = mk();
     expect(r.handle(ev('pointerdown', 1, 'touch', 100, 100))).toEqual([]);
     expect(r.handle(ev('pointerdown', 2, 'touch', 200, 100))).toEqual([]);
-    // translate both by +10,+0: pan only
+    // move first finger only: midpoint shifts and distance changes
     const a = r.handle(ev('pointermove', 1, 'touch', 110, 100));
     // after first finger moved: dist 90, mid 155 -> pan 5, zoom 0.9
     expect(a).toContainEqual({ kind: 'pan', dx: 5, dy: 0 });
@@ -75,5 +75,31 @@ describe('InputRouter', () => {
   it('pen hover emits hover action', () => {
     const r = mk();
     expect(r.handle(ev('pointermove', 1, 'pen', 5, 6, 0, 0))).toEqual([{ kind: 'hover', x: 5, y: 6 }]);
+  });
+
+  it('finger lifted while pen is down leaves no ghost touch (no phantom gesture)', () => {
+    const r = mk();
+    r.handle(ev('pointerdown', 2, 'touch', 50, 50));
+    r.handle(ev('pointerdown', 1, 'pen', 10, 10));
+    r.handle(ev('pointerup', 2, 'touch', 50, 50, 0, 0));
+    r.handle(ev('pointerup', 1, 'pen', 10, 10, 0, 0));
+    expect(r.handle(ev('pointerdown', 3, 'touch', 100, 100))).toEqual([]);
+    expect(r.handle(ev('pointermove', 3, 'touch', 140, 100))).toEqual([]);
+  });
+
+  it('after a gesture ends, a new finger stays inert until all fingers lift', () => {
+    const r = mk();
+    r.handle(ev('pointerdown', 1, 'touch', 100, 100));
+    r.handle(ev('pointerdown', 2, 'touch', 200, 100));
+    expect(r.handle(ev('pointermove', 2, 'touch', 220, 100)).length).toBeGreaterThan(0);
+    r.handle(ev('pointerup', 2, 'touch', 220, 100, 0, 0));
+    expect(r.handle(ev('pointerdown', 3, 'touch', 300, 100))).toEqual([]);
+    expect(r.handle(ev('pointermove', 3, 'touch', 340, 100))).toEqual([]);
+    expect(r.handle(ev('pointermove', 1, 'touch', 120, 100))).toEqual([]);
+    r.handle(ev('pointerup', 1, 'touch', 120, 100, 0, 0));
+    r.handle(ev('pointerup', 3, 'touch', 340, 100, 0, 0));
+    r.handle(ev('pointerdown', 4, 'touch', 100, 100));
+    r.handle(ev('pointerdown', 5, 'touch', 200, 100));
+    expect(r.handle(ev('pointermove', 5, 'touch', 220, 100)).length).toBeGreaterThan(0);
   });
 });

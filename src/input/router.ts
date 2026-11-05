@@ -10,7 +10,7 @@ export type RouterAction =
   | { kind: 'zoom'; cx: number; cy: number; factor: number };
 
 type Pt = { x: number; y: number };
-type Mode = 'idle' | 'touchDraw' | 'gesture' | 'dead';
+type Mode = 'idle' | 'pending' | 'touchDraw' | 'gesture' | 'dead';
 
 /**
  * Turns raw pointer samples (screen px) into drawing / navigation actions.
@@ -80,9 +80,13 @@ export class InputRouter {
   }
 
   private touch(e: RouterEvent): RouterAction[] {
-    if (this.penId !== null) return [];
     const out: RouterAction[] = [];
     const id = e.pointerId;
+    if (this.penId !== null) {
+      // pen is down: ignore touches, but keep bookkeeping so no ghost fingers remain
+      if (e.type === 'pointerup' || e.type === 'pointercancel') this.touches.delete(id);
+      return out;
+    }
 
     if (e.type === 'pointerdown') {
       this.touches.set(id, { x: e.x, y: e.y });
@@ -92,15 +96,14 @@ export class InputRouter {
           this.touchDrawId = id;
           out.push({ kind: 'strokeStart', x: e.x, y: e.y, p: 0.5, t: e.t });
         } else {
-          this.mode = 'dead';
+          this.mode = 'pending';
         }
-      } else if (this.touches.size === 2 && this.mode !== 'dead') {
+      } else if (this.touches.size === 2 && (this.mode === 'pending' || this.mode === 'touchDraw')) {
         if (this.mode === 'touchDraw') out.push({ kind: 'strokeCancel' });
         this.touchDrawId = null;
         this.mode = 'gesture';
-      } else if (this.touches.size === 2) {
-        // first finger was a non-drawing touch: two fingers start a gesture
-        this.mode = 'gesture';
+      } else {
+        this.mode = 'dead'; // 3+ fingers or post-gesture: inert until all lift
       }
       return out;
     }
