@@ -170,10 +170,11 @@ body {
 }
 .tb-caret {
   position: absolute;
-  right: 1px;
-  bottom: 1px;
+  right: 2px;
+  bottom: 2px;
   display: inline-flex;
-  transform: scale(0.5);
+  opacity: 0.8;
+  transform: scale(0.7);
   transform-origin: bottom right;
 }
 
@@ -191,6 +192,14 @@ body {
 .tb-menu[hidden] {
   display: none;
 }
+.tb-menu-item.active {
+  color: #1a2f6b;
+  font-weight: 600;
+  background: #e6e9f4;
+}
+.tb-menu-item.active:active {
+  background: #d8dcee;
+}
 .tb-menu-item {
   justify-content: flex-start;
   gap: 10px;
@@ -202,6 +211,9 @@ body {
 .popover {
   position: absolute;
   width: min(320px, calc(100vw - 16px));
+  max-height: calc(100dvh - 120px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   box-sizing: border-box;
   padding: 12px 14px 14px;
   background: #fff;

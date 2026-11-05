@@ -85,6 +85,8 @@ renderToolBadge(badge, toolState.tool)
 function setTool(next: ToolState): void {
   toolState = next
   renderToolBadge(badge, toolState.tool)
+  const pk = popover.kind()
+  if (pk && pk !== toolState.tool) popover.close() // e.g. side-button switched to an eraser
   toolbar.refresh()
 }
 

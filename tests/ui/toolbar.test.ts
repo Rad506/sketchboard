@@ -44,7 +44,19 @@ describe('toolbar', () => {
     expect(t.onSelect).not.toHaveBeenCalled() // active tap goes to onActiveTap, not select
     t.btn('felt').click()
     expect(t.onSelect).toHaveBeenLastCalledWith('felt')
+    t.btn('shapes').click() // first tap opens the menu, last shape preselected
+    const menu = t.el.querySelector<HTMLElement>('.tb-menu')!
+    expect(menu.hidden).toBe(false)
+    expect(menu.querySelector('[data-shape="ellipse"]')!.classList.contains('active')).toBe(true)
+    menu.querySelector<HTMLButtonElement>('[data-shape="rect"]')!.click()
+    expect(t.onSelect).toHaveBeenLastCalledWith('rect')
+    expect(menu.hidden).toBe(true)
+    t.set({ tool: 'rect', lastPen: 'ink' })
+    t.tb.refresh()
+    t.btn('shapes').click() // active: toggles
+    expect(menu.hidden).toBe(false)
+    expect(menu.querySelector('[data-shape="rect"]')!.classList.contains('active')).toBe(true)
     t.btn('shapes').click()
-    expect(t.onSelect).toHaveBeenLastCalledWith('ellipse')
+    expect(menu.hidden).toBe(true)
   })
 })

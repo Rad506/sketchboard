@@ -97,6 +97,7 @@ export function mountToolbar(
     mb.className = 'tb-btn tb-menu-item'
     mb.dataset.shape = s
     mb.setAttribute('aria-label', SHAPE_LABEL[s])
+    mb.setAttribute('role', 'menuitemradio')
     mb.innerHTML = `<span class="tb-icon">${ICONS[s]}</span><span class="tb-menu-label">${SHAPE_LABEL[s]}</span>`
     mb.addEventListener('click', () => {
       lastShape = s
@@ -114,6 +115,11 @@ export function mountToolbar(
   }
   function openMenu(): void {
     menu.hidden = false
+    for (const mi of menu.children) {
+      const on = (mi as HTMLElement).dataset.shape === lastShape
+      mi.classList.toggle('active', on)
+      mi.setAttribute('aria-checked', String(on))
+    }
     sh.setAttribute('aria-expanded', 'true')
     const r = sh.getBoundingClientRect()
     const er = el.getBoundingClientRect()
@@ -122,10 +128,7 @@ export function mountToolbar(
   sh.setAttribute('aria-haspopup', 'menu')
   sh.setAttribute('aria-expanded', 'false')
   sh.addEventListener('click', () => {
-    if (!isShape(getState().tool)) {
-      closeMenu()
-      onSelect(lastShape)
-    } else if (menu.hidden) openMenu()
+    if (menu.hidden) openMenu()
     else closeMenu()
   })
   document.addEventListener('pointerdown', (e) => {

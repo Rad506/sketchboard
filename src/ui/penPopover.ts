@@ -33,7 +33,7 @@ export function mountPopover(
   toolbarEl: HTMLElement,
   getSettings: () => Settings,
   onChange: () => void,
-): { open(kind: PopoverKind, anchor: HTMLElement): void; close(): void; isOpen(): boolean } {
+): { open(kind: PopoverKind, anchor: HTMLElement): void; close(): void; isOpen(): boolean; kind(): PopoverKind | null } {
   const root = document.createElement('div')
   root.className = 'popover'
   root.hidden = true
@@ -44,6 +44,7 @@ export function mountPopover(
   }
 
   let current: PopoverKind | null = null
+  let currentAnchor: HTMLElement | null = null
 
   const get = (k: PopoverKind): { value: number; color: string | null; range: [number, number]; unit: string } => {
     const s = getSettings()
@@ -129,6 +130,7 @@ export function mountPopover(
           paintRecents()
           onChange()
         },
+        window.innerHeight < 500 ? 140 : 200, // compact wheel in phone landscape
       )
 
       const paintRecents = (): void => {
@@ -158,6 +160,18 @@ export function mountPopover(
   function close(): void {
     root.hidden = true
     current = null
+    currentAnchor = null
+  }
+
+  /** Sits above the toolbar, capped to the space left on screen (scrolls inside when short). */
+  function place(anchor: HTMLElement): void {
+    const tr = toolbarEl.getBoundingClientRect()
+    root.style.bottom = `${Math.max(0, window.innerHeight - tr.top + 8)}px`
+    root.style.maxHeight = `${Math.max(120, tr.top - 8 - 44)}px` // keep clear of the top bar
+    const ar = anchor.getBoundingClientRect()
+    const w = root.offsetWidth || 300
+    const left = Math.min(Math.max(8, ar.left + ar.width / 2 - w / 2), Math.max(8, window.innerWidth - w - 8))
+    root.style.left = `${left}px`
   }
 
   function open(kind: PopoverKind, anchor: HTMLElement): void {
@@ -168,13 +182,18 @@ export function mountPopover(
     current = kind
     build(kind)
     root.hidden = false
-    const tr = toolbarEl.getBoundingClientRect()
-    root.style.bottom = `${Math.max(0, window.innerHeight - tr.top + 8)}px`
-    const ar = anchor.getBoundingClientRect()
-    const w = root.offsetWidth || 300
-    const left = Math.min(Math.max(8, ar.left + ar.width / 2 - w / 2), Math.max(8, window.innerWidth - w - 8))
-    root.style.left = `${left}px`
+    currentAnchor = anchor
+    place(anchor)
   }
+
+  const relayout = (): void => {
+    if (!root.hidden && current && currentAnchor) {
+      build(current) // wheel size depends on the viewport height
+      place(currentAnchor)
+    }
+  }
+  window.addEventListener('resize', relayout)
+  window.addEventListener('orientationchange', relayout)
 
   // Tapping outside (but not on the toolbar, which decides for itself) dismisses it.
   document.addEventListener('pointerdown', (e) => {
@@ -182,5 +201,5 @@ export function mountPopover(
     if (!root.hidden && !root.contains(t) && !toolbarEl.contains(t)) close()
   })
 
-  return { open, close, isOpen: () => !root.hidden }
+  return { open, close, isOpen: () => !root.hidden, kind: () => (root.hidden ? null : current) }
 }
