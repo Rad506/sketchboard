@@ -74,4 +74,14 @@ describe('SideButtonDetector', () => {
     vi.advanceTimersByTime(1000);
     expect(out).toEqual(['single']);
   });
+
+  it('tip-down while a single click is pending emits single immediately (so the stroke uses the new tool)', () => {
+    d.handle(hover(0, 1));
+    d.handle(hover(150, 0));
+    expect(out).toEqual([]);
+    d.handle({ type: 'pointerdown', pointerId: 2, pointerType: 'pen', buttons: 1, pressure: 0.3, t: 250 });
+    expect(out).toEqual(['single']);
+    vi.advanceTimersByTime(1000);
+    expect(out).toEqual(['single']); // no second emit from the timer
+  });
 });

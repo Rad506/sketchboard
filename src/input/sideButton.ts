@@ -24,6 +24,14 @@ export class SideButtonDetector {
 
     if (s.pressure > 0) {
       this.pressId = null; // tip contact mid-press cancels
+      if (this.timer !== null) {
+        // a single click is still waiting out its double-click window: settle it now so the tool
+        // switches before this stroke starts (the detector runs before the router in main.ts)
+        clearTimeout(this.timer);
+        this.timer = null;
+        this.firstReleaseT = null;
+        this.onGesture('single');
+      }
       return;
     }
     if (s.type === 'pointerleave' || s.type === 'pointercancel') {
