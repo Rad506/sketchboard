@@ -66,7 +66,23 @@ describe('recognize', () => {
   });
 
   it('straight line -> line', () => {
-    fourOfFive(noisyLine, (r) => r?.shape === 'line' && r.vertices.length === 2);
+    const tol = 0.05 * Math.hypot(260, 120);
+    fourOfFive(noisyLine, (r) => r?.shape === 'line' && r.vertices.length === 2
+      && near(r.vertices[0], [40, 80], tol) && near(r.vertices[1], [300, 200], tol));
+  });
+
+  it('line keeps the true endpoints on a sparse fast flick', () => {
+    const r = recognize([[0, 0], [0, 0], [100, 100], [100, 100], [100, 100]]);
+    expect(r?.shape).toBe('line');
+    if (r?.shape !== 'line') return;
+    expect(near(r.vertices[0], [0, 0], 5)).toBe(true);
+    expect(near(r.vertices[1], [100, 100], 5)).toBe(true);
+  });
+
+  it('closure gap is measured on the raw end points (sparse stroke)', () => {
+    // real gap is 1, so this is closed; it must not be read as an open line
+    const r = recognize([[0, 0], [100, 0], [50, 0], [0, 0], [1, 0]]);
+    expect(r?.shape).not.toBe('line');
   });
 
   it.each([

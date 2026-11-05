@@ -48,9 +48,10 @@ function rdp(pts: Pt[], eps: number): Pt[] {
   return pts.filter((_, i) => keep[i]);
 }
 
-/** Moving average (window 5) to tame hand jitter; ends use the shorter window. */
+/** Moving average (window 5) to tame hand jitter; first and last points stay fixed. */
 function smooth(pts: Pt[]): Pt[] {
-  return pts.map((_, i) => {
+  return pts.map((p0, i) => {
+    if (i === 0 || i === pts.length - 1) return p0; // keep the true endpoints
     const w = pts.slice(Math.max(0, i - 2), i + 3);
     return [w.reduce((a, p) => a + p[0], 0) / w.length, w.reduce((a, p) => a + p[1], 0) / w.length] as Pt;
   });
@@ -125,7 +126,7 @@ function arrow(pts: Pt[], eps: number, raw: Pt[]): Recognized | null {
   const shaft = fitLine(pts.slice(0, tip + 1));
   if (shaft.dev > SHAFT_DEV * eps) return null; // shaft must be straight
   const dir = shaft.dir;
-  const from = project(s, shaft);
+  const from = project(raw[0], shaft);
   let far = raw[tip];
   for (let i = Math.max(0, tip - 2); i <= Math.min(raw.length - 1, tip + 2); i++) {
     if ((raw[i][0] - s[0]) * dir[0] + (raw[i][1] - s[1]) * dir[1] > (far[0] - s[0]) * dir[0] + (far[1] - s[1]) * dir[1]) far = raw[i];
@@ -235,8 +236,8 @@ export function recognize(raw: Pt[]): Recognized | null {
   const arr = arrow(pts, eps, raw);
   if (arr) return arr;
 
-  const first = pts[0];
-  const last = pts[pts.length - 1];
+  const first = raw[0];
+  const last = raw[raw.length - 1];
   if (dist(first, last) < CLOSED_GAP * diag) {
     // Cut an overshoot where the pen came back closest to the start.
     let cut = pts.length - 1;
