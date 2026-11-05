@@ -39,4 +39,21 @@ describe('BoardDoc', () => {
     expect(cb).toHaveBeenNthCalledWith(1, [a], []);
     expect(cb).toHaveBeenNthCalledWith(2, [], ['a']);
   });
+
+  it('ignores (and warns about) objects with a non-finite or absurdly large bbox', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const d = new BoardDoc();
+    const cb = vi.fn();
+    d.onChange(cb);
+    d.add(stroke('nan', 0, 0, NaN, 10));
+    d.add(stroke('inf', 0, 0, Infinity, 10));
+    d.add(stroke('huge', 0, 0, 2e7, 10));
+    d.add(stroke('hugeY', -6e6, -6e6, 6e6, 6e6));
+    expect(d.all()).toEqual([]);
+    expect(cb).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(4);
+    d.add(stroke('ok', 0, 0, 9e6, 10)); // big but within the limit is still accepted
+    expect(d.get('ok')).toBeDefined();
+    warn.mockRestore();
+  });
 });

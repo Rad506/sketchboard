@@ -1,6 +1,8 @@
 import type { BBox, BoardObject } from './types';
 
 const CELL = 256;
+/** Objects wider/taller than this can't be indexed sanely (a 1e7 span is ~1.5e9 grid cells). */
+const MAX_SPAN = 1e7;
 
 type Listener = (added: BoardObject[], removedIds: string[]) => void;
 
@@ -18,6 +20,12 @@ export class BoardDoc {
   }
 
   add(o: BoardObject): void {
+    const b = o.bbox;
+    const span = Math.max(b.maxX - b.minX, b.maxY - b.minY);
+    if (![b.minX, b.minY, b.maxX, b.maxY].every(Number.isFinite) || !(span <= MAX_SPAN)) {
+      console.warn('BoardDoc: ignoring object with invalid bbox', o.id);
+      return; // cells() would loop (near-)forever
+    }
     if (this.objs.has(o.id)) this.detach(o.id);
     this.objs.set(o.id, o);
     for (const k of this.cells(o.bbox)) {
