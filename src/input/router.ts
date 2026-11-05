@@ -1,0 +1,154 @@
+import type { PenSample } from './sideButton';
+
+export type RouterEvent = PenSample & { x: number; y: number };
+
+export type RouterAction =
+  | { kind: 'strokeStart' | 'strokeMove' | 'strokeEnd'; x: number; y: number; p: number; t: number }
+  | { kind: 'strokeCancel' }
+  | { kind: 'hover'; x: number; y: number }
+  | { kind: 'pan'; dx: number; dy: number }
+  | { kind: 'zoom'; cx: number; cy: number; factor: number };
+
+type Pt = { x: number; y: number };
+type Mode = 'idle' | 'touchDraw' | 'gesture' | 'dead';
+
+/**
+ * Turns raw pointer samples (screen px) into drawing / navigation actions.
+ * Pen (and mouse, for desktop testing) draw; touch pans/zooms with two fingers,
+ * or draws with one finger when fingerDraw is on. Conversion to world coords is the caller's job.
+ */
+export class InputRouter {
+  private penId: number | null = null;
+  private touches = new Map<number, Pt>();
+  private mode: Mode = 'idle';
+  private touchDrawId: number | null = null;
+
+  constructor(private opts: { fingerDraw: () => boolean }) {}
+
+  handle(e: RouterEvent): RouterAction[] {
+    if (e.pointerType === 'touch') return this.touch(e);
+    if (e.pointerType === 'pen' || e.pointerType === 'mouse') return this.pen(e);
+    return [];
+  }
+
+  private pressureOf(e: RouterEvent): number {
+    return e.pointerType === 'mouse' ? 0.5 : e.pressure;
+  }
+
+  private contact(e: RouterEvent): boolean {
+    return e.pointerType === 'mouse' ? (e.buttons & 1) === 1 : e.pressure > 0;
+  }
+
+  private act(kind: 'strokeStart' | 'strokeMove' | 'strokeEnd', e: RouterEvent): RouterAction {
+    return { kind, x: e.x, y: e.y, p: this.pressureOf(e), t: e.t };
+  }
+
+  private pen(e: RouterEvent): RouterAction[] {
+    const out: RouterAction[] = [];
+    const active = this.penId !== null;
+    const mine = this.penId === e.pointerId;
+
+    if (e.type === 'pointerup' || e.type === 'pointercancel') {
+      if (mine) {
+        this.penId = null;
+        out.push({ kind: 'strokeEnd', x: e.x, y: e.y, p: this.pressureOf(e) || 0, t: e.t });
+      }
+      return out;
+    }
+    if (e.type === 'pointerleave') return out;
+
+    if (mine) {
+      if (e.type === 'pointermove' && this.contact(e)) {
+        out.push(this.act('strokeMove', e));
+      }
+      return out;
+    }
+    if (active) return out;
+
+    if (this.contact(e)) {
+      if (e.type === 'pointerdown' || e.type === 'pointermove') {
+        if (this.mode === 'touchDraw') out.push({ kind: 'strokeCancel' });
+        this.mode = this.touches.size ? 'dead' : 'idle';
+        this.touchDrawId = null;
+        this.penId = e.pointerId;
+        out.push(this.act('strokeStart', e));
+      }
+    } else {
+      out.push({ kind: 'hover', x: e.x, y: e.y });
+    }
+    return out;
+  }
+
+  private touch(e: RouterEvent): RouterAction[] {
+    if (this.penId !== null) return [];
+    const out: RouterAction[] = [];
+    const id = e.pointerId;
+
+    if (e.type === 'pointerdown') {
+      this.touches.set(id, { x: e.x, y: e.y });
+      if (this.touches.size === 1) {
+        if (this.opts.fingerDraw()) {
+          this.mode = 'touchDraw';
+          this.touchDrawId = id;
+          out.push({ kind: 'strokeStart', x: e.x, y: e.y, p: 0.5, t: e.t });
+        } else {
+          this.mode = 'dead';
+        }
+      } else if (this.touches.size === 2 && this.mode !== 'dead') {
+        if (this.mode === 'touchDraw') out.push({ kind: 'strokeCancel' });
+        this.touchDrawId = null;
+        this.mode = 'gesture';
+      } else if (this.touches.size === 2) {
+        // first finger was a non-drawing touch: two fingers start a gesture
+        this.mode = 'gesture';
+      }
+      return out;
+    }
+
+    if (e.type === 'pointermove') {
+      const prev = this.touches.get(id);
+      if (!prev) return out;
+      if (this.mode === 'touchDraw' && id === this.touchDrawId) {
+        this.touches.set(id, { x: e.x, y: e.y });
+        out.push({ kind: 'strokeMove', x: e.x, y: e.y, p: 0.5, t: e.t });
+      } else if (this.mode === 'gesture' && this.touches.size === 2) {
+        const before = this.geometry();
+        this.touches.set(id, { x: e.x, y: e.y });
+        const after = this.geometry();
+        const dx = after.mx - before.mx;
+        const dy = after.my - before.my;
+        if (dx !== 0 || dy !== 0) out.push({ kind: 'pan', dx, dy });
+        const factor = before.dist > 0 ? after.dist / before.dist : 1;
+        if (factor !== 1 && Number.isFinite(factor)) {
+          out.push({ kind: 'zoom', cx: after.mx, cy: after.my, factor });
+        }
+      } else {
+        this.touches.set(id, { x: e.x, y: e.y });
+      }
+      return out;
+    }
+
+    if (e.type === 'pointerup' || e.type === 'pointercancel') {
+      if (!this.touches.has(id)) return out;
+      this.touches.delete(id);
+      if (this.mode === 'touchDraw' && id === this.touchDrawId) {
+        this.touchDrawId = null;
+        out.push(
+          e.type === 'pointerup'
+            ? { kind: 'strokeEnd', x: e.x, y: e.y, p: 0.5, t: e.t }
+            : { kind: 'strokeCancel' },
+        );
+        this.mode = 'idle';
+      } else if (this.mode === 'gesture') {
+        this.mode = 'dead'; // remaining finger does nothing until all lift
+      }
+      if (this.touches.size === 0) this.mode = 'idle';
+    }
+    return out;
+  }
+
+  private geometry(): { mx: number; my: number; dist: number } {
+    const [a, b] = [...this.touches.values()];
+    return { mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, dist: Math.hypot(a.x - b.x, a.y - b.y) };
+  }
+}
