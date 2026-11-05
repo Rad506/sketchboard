@@ -13,6 +13,15 @@ export class Renderer {
     doc.onChange(() => this.requestDraw())
   }
 
+  /** Point at another board's doc (board switch). The old doc's listener is a harmless extra redraw. */
+  setDoc(doc: BoardDoc): void {
+    this.doc = doc
+    doc.onChange(() => {
+      if (this.doc === doc) this.requestDraw()
+    })
+    this.requestDraw()
+  }
+
   setViewport(vp: Viewport): void {
     this.vp = vp
     this.requestDraw()

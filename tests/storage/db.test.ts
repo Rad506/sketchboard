@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { IDBFactory } from 'fake-indexeddb'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { openDb, openInitialBoard, type BoardMeta } from '../../src/storage/db'
+import { openDb, type BoardMeta } from '../../src/storage/db'
 import { defaultSettings } from '../../src/core/settings'
 import type { BoardObject } from '../../src/core/types'
 
@@ -75,11 +75,13 @@ describe('storage db', () => {
     expect(await db.loadSettings()).toEqual(s)
   })
 
-  it('openInitialBoard creates "My first board" once, then reuses the most recent', async () => {
+  it('patchBoard merges atomically and leaves other fields alone; missing board is undefined', async () => {
     const db = await openDb()
-    const first = await openInitialBoard(db)
-    expect(first.name).toBe('My first board')
-    expect((await openInitialBoard(db)).id).toBe(first.id)
-    expect(await db.listBoards()).toHaveLength(1)
+    await db.putBoard(meta('b1', 5))
+    const next = await db.patchBoard('b1', { viewport: { x: 1, y: 2, zoom: 3 } })
+    expect(next?.updatedAt).toBe(5)
+    expect((await db.getBoard('b1'))?.viewport).toEqual({ x: 1, y: 2, zoom: 3 })
+    expect(await db.patchBoard('nope', { name: 'x' })).toBeUndefined()
+    expect(await db.getBoard('nope')).toBeUndefined()
   })
 })

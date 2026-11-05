@@ -19,6 +19,7 @@ export class Autosave {
   private timer: ReturnType<typeof setTimeout> | null = null
   private inflight: Promise<void> = Promise.resolve()
   private status: SaveStatus = 'ok'
+  private disposed = false
 
   constructor(
     private db: Pick<Db, 'writeChanges'> | null,
@@ -37,7 +38,7 @@ export class Autosave {
   }
 
   queue(added: BoardObject[], removedIds: string[]): void {
-    if (!this.db) return
+    if (!this.db || this.disposed) return
     for (const id of removedIds) {
       const prev = this.pending.get(id)
       if (prev && !this.persisted.has(id)) this.pending.delete(id) // add then remove: never hit the db
@@ -59,8 +60,20 @@ export class Autosave {
     return this.inflight
   }
 
+  /**
+   * Stop for good and drop anything unwritten (the board is being deleted, so a late
+   * write would leave orphan objects). Resolves once an in-flight write has settled.
+   */
+  dispose(): Promise<void> {
+    this.disposed = true
+    if (this.timer) clearTimeout(this.timer)
+    this.timer = null
+    this.pending = new Map()
+    return this.inflight
+  }
+
   private async write(): Promise<void> {
-    if (!this.db || this.pending.size === 0) return
+    if (!this.db || this.disposed || this.pending.size === 0) return
     const batch = this.pending
     this.pending = new Map()
     const added: BoardObject[] = []
@@ -73,6 +86,7 @@ export class Autosave {
       await this.db.writeChanges(this.boardId, added, removed)
     } catch {
       for (const [id, o] of batch) if (!this.pending.has(id)) this.pending.set(id, o) // newer entries win
+      if (this.disposed) return
       this.setStatus('unavailable')
       this.arm(RETRY_MS)
       return
@@ -85,14 +99,16 @@ export class Autosave {
 
 /**
  * Feeds doc changes to the autosaver and flushes when the app is hidden.
- * `beforeFlush` runs first on hidden (e.g. finish an open text edit, which
+ * Returns an unwire function (call it when leaving the board). `beforeFlush` runs first on hidden (e.g. finish an open text edit, which
  * temporarily removes its text from the doc).
  */
-export function wireAutosave(doc: BoardDoc, autosave: Autosave, beforeFlush?: () => void): void {
+export function wireAutosave(doc: BoardDoc, autosave: Autosave, beforeFlush?: () => void): () => void {
   doc.onChange((added, removed) => autosave.queue(added, removed))
-  document.addEventListener('visibilitychange', () => {
+  const onVisibility = (): void => {
     if (document.visibilityState !== 'hidden') return
     beforeFlush?.()
     void autosave.flush()
-  })
+  }
+  document.addEventListener('visibilitychange', onVisibility)
+  return () => document.removeEventListener('visibilitychange', onVisibility)
 }

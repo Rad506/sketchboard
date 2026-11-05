@@ -203,4 +203,42 @@ describe('Autosave', () => {
     await vi.advanceTimersByTimeAsync(0)
     expect(order).toEqual(['finishEdit', 'write'])
   })
+  it('dispose drops pending writes and cancels the timer (board deleted)', async () => {
+    const db = fakeDb()
+    const a = new Autosave(db, 'b1', () => {})
+    a.queue([stroke('x')], [])
+    await a.dispose()
+    await vi.advanceTimersByTimeAsync(5000)
+    await a.flush()
+    expect(db.writeChanges).not.toHaveBeenCalled()
+  })
+
+  it('dispose waits for a write already in flight', async () => {
+    let release!: () => void
+    const db = fakeDb(() => new Promise<void>((r) => { release = r }))
+    const a = new Autosave(db, 'b1', () => {})
+    a.queue([stroke('x')], [])
+    void a.flush()
+    await vi.advanceTimersByTimeAsync(0)
+    let done = false
+    void a.dispose().then(() => { done = true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(done).toBe(false)
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(done).toBe(true)
+  })
+
+  it('the unwire function returned by wireAutosave stops the hidden-flush listener', async () => {
+    const db = fakeDb()
+    const a = new Autosave(db, 'b1', () => {})
+    const doc = new BoardDoc()
+    const hook = vi.fn()
+    const unwire = wireAutosave(doc, a, hook)
+    unwire()
+    setVisibility('hidden')
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(hook).not.toHaveBeenCalled()
+  })
 })

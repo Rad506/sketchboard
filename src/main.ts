@@ -9,7 +9,7 @@ import { applySideGesture, selectTool, type PenKind, type Tool, type ToolState }
 import { BoardDoc } from './core/board'
 import { History } from './core/history'
 import { bboxOf, newId } from './core/geometry'
-import { panBy, toScreen, toWorld, zoomAt, type Viewport } from './core/viewport'
+import { fitTo, panBy, toScreen, toWorld, zoomAt, type Viewport } from './core/viewport'
 import type { Pt, StrokeObj, TextObj } from './core/types'
 import { Renderer } from './render/renderer'
 import { StrokeEraseSession } from './tools/strokeEraser'
@@ -17,10 +17,22 @@ import { AreaEraseSession } from './tools/areaEraser'
 import { dragToObject, type ShapeToolKind } from './tools/shapeTool'
 import { textChange, openTextEditor } from './tools/textTool'
 import { applyLoadedSettings, defaultSettings } from './core/settings'
-import { openDb, openInitialBoard, type Db } from './storage/db'
+import { openDb, type BoardMeta, type Db } from './storage/db'
 import { Autosave, wireAutosave } from './storage/autosave'
 import { mountToolbar } from './ui/toolbar'
 import { mountPopover } from './ui/penPopover'
+import { mountTopBar, type MenuItem } from './ui/topBar'
+import { mountBoardsHome } from './ui/boardsHome'
+import { confirmInApp, promptInApp } from './ui/confirm'
+import {
+  contentBounds,
+  deleteBoardFlow,
+  ensureFirstBoard,
+  makeThumbnail,
+  openBoardData,
+  renameBoard,
+  saveViewport,
+} from './core/boards'
 import { SnapController, recognizedToObject, commitStroke } from './tools/snapController'
 
 const TAP_SLOP_PX = 6
@@ -43,6 +55,7 @@ const updateSW = registerSW({
 const app = document.getElementById('app')!
 app.innerHTML = `
   <div id="topbar"><span id="badge"></span><span id="save-status" hidden>Not saving — storage unavailable</span></div>
+  <div id="home"></div>
   <div id="board">
     <canvas id="main-canvas"></canvas>
     <canvas id="live-canvas"></canvas>
@@ -53,15 +66,16 @@ const badge = document.getElementById('badge') as HTMLElement
 const mainCanvas = document.getElementById('main-canvas') as HTMLCanvasElement
 const liveCanvas = document.getElementById('live-canvas') as HTMLCanvasElement
 const live = new LiveLayer(liveCanvas)
-const doc = new BoardDoc()
-const history = new History(doc)
+let doc = new BoardDoc()
+let history = new History(doc)
 const renderer = new Renderer(mainCanvas, doc)
 let vp: Viewport = { x: 0, y: 0, zoom: 1 }
 
-function setView(next: Viewport): void {
+function setView(next: Viewport, persist = true): void {
   vp = next
   live.setViewport(vp)
   renderer.setViewport(vp)
+  if (persist) scheduleViewportSave()
 }
 
 function resize(): void {
@@ -406,20 +420,189 @@ for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 
 }
 
 /**
- * Storage: single board for now (Task 15 adds the home screen). Load first, THEN subscribe
- * autosave, so loading doesn't re-save everything. If storage is unavailable the app still draws.
+ * Storage and boards. Start-up opens the most recently edited board; the home screen is
+ * reached via "← Boards" / tapping the name. Each board gets a fresh BoardDoc + History +
+ * Autosave, and the renderer is re-pointed, so nothing leaks across boards. If storage is
+ * unavailable the app still draws on a scratch board.
  */
 const saveStatus = document.getElementById('save-status') as HTMLElement
+const homeEl = document.getElementById('home') as HTMLDivElement
 const showStatus = (s: 'ok' | 'unavailable'): void => {
   saveStatus.hidden = s === 'ok'
 }
 
+let db: Db | null = null
+let active: { meta: BoardMeta; autosave: Autosave; unwire: () => void } | null = null
+/** True while switching boards, so a double tap can't interleave two switches. */
+let busy = false
+
+/** Viewport saves are debounced 500 ms and don't bump updatedAt (the home list orders by real edits). */
+let vpTimer: ReturnType<typeof setTimeout> | null = null
+function scheduleViewportSave(): void {
+  if (!db || !active) return
+  if (vpTimer) clearTimeout(vpTimer)
+  vpTimer = setTimeout(flushViewportSave, 500)
+}
+function flushViewportSave(): void {
+  if (vpTimer) clearTimeout(vpTimer)
+  vpTimer = null
+  if (!db || !active) return
+  saveViewport(db, active.meta.id, vp).catch(() => showStatus('unavailable'))
+}
+
+function resetSessions(): void {
+  textDrag = null
+  suppressTap = false
+  shapeDrag = null
+  areaSession = null
+  eraseSession = null
+  current = null
+  snap.cancel()
+  live.clear()
+}
+
+const showView = (v: 'home' | 'board' | 'boot'): void => {
+  app.dataset.view = v
+  if (v === 'board') resize()
+}
+showView('boot')
+
+const topbar = mountTopBar(document.getElementById('topbar')!, { onHome: () => void showHome(), items: () => menuItems() })
+
+/** Finish edits, flush autosave, save viewport + thumbnail, then drop per-board state. */
+async function leaveBoard(): Promise<void> {
+  const a = active
+  if (!a || !db) return
+  commitOpenEdit?.() // a text being edited is out of the doc; finish it so it's saved
+  popover.close()
+  topbar.closeMenu()
+  resetSessions()
+  active = null
+  a.unwire()
+  if (vpTimer) clearTimeout(vpTimer)
+  vpTimer = null
+  try {
+    await a.autosave.flush()
+    const thumb = await makeThumbnail(doc).catch(() => null)
+    const empty = doc.all().length === 0
+    await db.patchBoard(a.meta.id, { viewport: vp, ...(thumb || empty ? { thumbnail: thumb ?? undefined } : {}) })
+  } catch {
+    showStatus('unavailable')
+  }
+}
+
+async function showHome(): Promise<void> {
+  if (!db || busy) return
+  busy = true
+  try {
+    await leaveBoard()
+    showView('home')
+    await mountBoardsHome(homeEl, db, (id) => {
+      void openBoard(id).then((ok) => {
+        if (!ok) void showHome()
+      })
+    })
+  } finally {
+    busy = false
+  }
+}
+
+async function openBoard(id: string): Promise<boolean> {
+  if (!db || busy) return false
+  busy = true
+  try {
+    await leaveBoard()
+    const { meta, objects } = await openBoardData(db, id)
+    doc = new BoardDoc()
+    for (const o of objects) doc.add(o) // load first, THEN subscribe autosave, so loading doesn't re-save everything
+    history = new History(doc)
+    renderer.setDoc(doc)
+    const autosave = new Autosave(db, meta.id, showStatus, objects.map((o) => o.id))
+    const unwire = wireAutosave(doc, autosave, () => commitOpenEdit?.())
+    active = { meta, autosave, unwire }
+    topbar.setName(meta.name)
+    showView('board')
+    setView(meta.viewport, false)
+    toolbar.refresh()
+    return true
+  } catch {
+    return false
+  } finally {
+    busy = false
+  }
+}
+
+function fitContent(): void {
+  const b = contentBounds(doc)
+  if (!b) return
+  setView(fitTo(b, board.clientWidth, board.clientHeight, 40))
+}
+
+async function renameCurrent(): Promise<void> {
+  const a = active
+  if (!db || !a) return
+  const v = await promptInApp('Rename board', a.meta.name, 'Rename')
+  if (v === null) return
+  try {
+    a.meta = await renameBoard(db, a.meta.id, v)
+    topbar.setName(a.meta.name)
+  } catch {
+    showStatus('unavailable')
+  }
+}
+
+async function deleteCurrent(): Promise<void> {
+  const a = active
+  if (!db || !a) return
+  try {
+    await deleteBoardFlow(db, a.meta, confirmInApp, () => void showHome(), async () => {
+      commitOpenEdit?.()
+      a.unwire()
+      await a.autosave.dispose() // no late write may recreate the deleted board's objects
+      if (vpTimer) clearTimeout(vpTimer)
+      vpTimer = null
+      resetSessions()
+      active = null
+    })
+  } catch {
+    showStatus('unavailable')
+    void showHome()
+  }
+}
+
+function menuItems(): MenuItem[] {
+  const items: MenuItem[] = [
+    { label: 'Fit to content', onSelect: fitContent },
+    {
+      label: 'Draw with finger',
+      checked: settings.fingerDraw,
+      onSelect: () => {
+        settings.fingerDraw = !settings.fingerDraw
+        settingsChanged()
+      },
+    },
+  ]
+  if (db && active) {
+    items.push({ label: 'Rename', onSelect: () => void renameCurrent() })
+    items.push({ label: 'Delete', danger: true, onSelect: () => void deleteCurrent() })
+  }
+  // Task 16: append the "Share" item here.
+  return items
+}
+
+function noStorage(): void {
+  new Autosave(null, '', showStatus)
+  topbar.setName('Sketchboard')
+  topbar.setHomeEnabled(false)
+  showView('board')
+}
+
 async function initStorage(): Promise<void> {
-  let db: Db | null = null
   try {
     db = await openDb()
   } catch {
-    new Autosave(null, '', showStatus)
+    db = null
+    noStorage()
     return
   }
   try {
@@ -429,35 +612,31 @@ async function initStorage(): Promise<void> {
     // keep defaults
   }
 
-  let autosave: Autosave
-  try {
-    const meta = await openInitialBoard(db)
-    const objs = await db.loadObjects(meta.id)
-    const early = doc.all() // drawn in the few ms before load finished
-    for (const o of objs) doc.add(o)
-    setView(meta.viewport)
-    renderer.requestDraw()
-    autosave = new Autosave(db, meta.id, showStatus, objs.map((o) => o.id))
-    // a text being edited is out of the doc; finish it first so a backgrounded app keeps it
-    wireAutosave(doc, autosave, () => commitOpenEdit?.())
-    if (early.length) autosave.queue(early, [])
-  } catch {
-    new Autosave(null, '', showStatus)
-    return
-  }
-
   let settingsTimer: ReturnType<typeof setTimeout> | null = null
   const saveSettingsNow = (): void => {
     if (settingsTimer) clearTimeout(settingsTimer)
     settingsTimer = null
-    db!.saveSettings(structuredClone(settings)).catch(() => showStatus('unavailable'))
+    db?.saveSettings(structuredClone(settings)).catch(() => showStatus('unavailable'))
   }
   onSettingsChange(() => {
     if (settingsTimer) clearTimeout(settingsTimer)
     settingsTimer = setTimeout(saveSettingsNow, 500)
   })
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden' && settingsTimer) saveSettingsNow()
+    if (document.visibilityState !== 'hidden') return
+    if (settingsTimer) saveSettingsNow()
+    if (vpTimer) flushViewportSave()
   })
+
+  let opened = false
+  try {
+    opened = await openBoard((await ensureFirstBoard(db)).id)
+  } catch {
+    opened = false
+  }
+  if (!opened) {
+    db = null
+    noStorage()
+  }
 }
 void initStorage()

@@ -32,7 +32,10 @@ const MIGRATIONS: Record<number, Upgrade> = {
 
 export interface Db {
   listBoards(): Promise<BoardMeta[]>
+  getBoard(id: string): Promise<BoardMeta | undefined>
   putBoard(m: BoardMeta): Promise<void>
+  /** Atomic read-modify-write of one board's meta. Returns undefined if the board is gone. */
+  patchBoard(id: string, patch: Partial<Omit<BoardMeta, 'id' | 'schema' | 'createdAt'>>): Promise<BoardMeta | undefined>
   deleteBoard(id: string): Promise<void>
   loadObjects(boardId: string): Promise<BoardObject[]>
   writeChanges(boardId: string, added: BoardObject[], removedIds: string[]): Promise<void>
@@ -53,8 +56,24 @@ export async function openDb(): Promise<Db> {
       return all.sort((a, b) => b.updatedAt - a.updatedAt)
     },
 
+    async getBoard(id) {
+      return (await idb.get('boards', id)) as BoardMeta | undefined
+    },
+
     async putBoard(m) {
       await idb.put('boards', m)
+    },
+
+    async patchBoard(id, patch) {
+      const tx = idb.transaction('boards', 'readwrite')
+      const cur = (await tx.store.get(id)) as BoardMeta | undefined
+      if (!cur) {
+        await tx.done
+        return undefined
+      }
+      const next: BoardMeta = { ...cur, ...patch }
+      await Promise.all([tx.store.put(next), tx.done])
+      return next
     },
 
     async deleteBoard(id) {
@@ -92,24 +111,4 @@ export async function openDb(): Promise<Db> {
       await idb.put('settings', s, SETTINGS_KEY)
     },
   }
-}
-
-/**
- * Single-board stand-in until the home screen (Task 15): reuse the most recently
- * updated board, or create "My first board".
- */
-export async function openInitialBoard(db: Db): Promise<BoardMeta> {
-  const [latest] = await db.listBoards()
-  if (latest) return latest
-  const now = Date.now()
-  const m: BoardMeta = {
-    id: crypto.randomUUID(),
-    name: 'My first board',
-    createdAt: now,
-    updatedAt: now,
-    viewport: { x: 0, y: 0, zoom: 1 },
-    schema: 1,
-  }
-  await db.putBoard(m)
-  return m
 }
