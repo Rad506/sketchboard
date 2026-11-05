@@ -12,17 +12,27 @@ import { bboxOf, newId } from './core/geometry'
 import { panBy, toScreen, toWorld, zoomAt, type Viewport } from './core/viewport'
 import type { Pt, StrokeObj, TextObj } from './core/types'
 import { Renderer } from './render/renderer'
-import { PEN_DEFAULTS } from './render/pens'
 import { StrokeEraseSession } from './tools/strokeEraser'
 import { AreaEraseSession } from './tools/areaEraser'
 import { dragToObject, type ShapeToolKind } from './tools/shapeTool'
 import { textChange, openTextEditor } from './tools/textTool'
+import { defaultSettings } from './core/settings'
+import { mountToolbar } from './ui/toolbar'
+import { mountPopover } from './ui/penPopover'
 import { SnapController, recognizedToObject, commitStroke } from './tools/snapController'
 
-const TEXT_FONT_SIZE = 24 // Task 13 makes text size/colour settings (Ruling R3)
-const TEXT_COLOR = '#000000'
 const TAP_SLOP_PX = 6
-const AREA_RADIUS_PX = 20 // default; Task 13 makes this a setting (5-80)
+
+/** In-memory tool settings; Task 14 persists them via onSettingsChange. */
+const settings = defaultSettings()
+let settingsListener: (() => void) | null = null
+export function onSettingsChange(cb: () => void): void {
+  settingsListener = cb
+}
+function settingsChanged(): void {
+  toolbar.refresh()
+  settingsListener?.()
+}
 
 const updateSW = registerSW({
   onNeedRefresh: () => showUpdateBar(() => updateSW(true)),
@@ -34,7 +44,8 @@ app.innerHTML = `
   <div id="board">
     <canvas id="main-canvas"></canvas>
     <canvas id="live-canvas"></canvas>
-  </div>`
+  </div>
+  <div id="toolbar"></div>`
 const board = document.getElementById('board') as HTMLDivElement
 const badge = document.getElementById('badge') as HTMLElement
 const mainCanvas = document.getElementById('main-canvas') as HTMLCanvasElement
@@ -71,34 +82,18 @@ resize()
 let toolState: ToolState = { tool: 'ink', lastPen: 'ink' }
 renderToolBadge(badge, toolState.tool)
 
-const detector = new SideButtonDetector((g) => {
-  toolState = applySideGesture(toolState, g)
+function setTool(next: ToolState): void {
+  toolState = next
   renderToolBadge(badge, toolState.tool)
-})
-const router = new InputRouter({ fingerDraw: () => false })
+  toolbar.refresh()
+}
+
+const detector = new SideButtonDetector((g) => setTool(applySideGesture(toolState, g)))
+const router = new InputRouter({ fingerDraw: () => settings.fingerDraw })
 
 board.addEventListener('contextmenu', (e) => e.preventDefault())
 
 const isPen = (t: Tool): t is PenKind => t === 'ink' || t === 'felt' || t === 'highlighter'
-
-// Temporary key bindings until the toolbar (Task 13): 1 ink, 2 felt, 3 highlighter, 4 ellipse, 5 triangle, 6 rect, 7 arrow.
-const KEY_TOOLS: Record<string, Tool> = {
-  '1': 'ink', '2': 'felt', '3': 'highlighter', '4': 'ellipse', '5': 'triangle', '6': 'rect', '7': 'arrow', '8': 'text',
-}
-window.addEventListener('keydown', (e) => {
-  if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'y')) {
-    e.preventDefault()
-    if (e.key === 'z') history.undo()
-    else history.redo()
-    renderer.requestDraw()
-    return
-  }
-  if (editing || (e.target as HTMLElement | null)?.tagName === 'TEXTAREA') return
-  const tool = KEY_TOOLS[e.key]
-  if (!tool) return
-  toolState = selectTool(toolState, tool)
-  renderToolBadge(badge, toolState.tool)
-})
 
 function toSample(e: PointerEvent): PenSample {
   return {
@@ -114,7 +109,7 @@ function toSample(e: PointerEvent): PenSample {
 /** Pen sizes are world units; eraser previews are screen px, so they divide by zoom. */
 function styleFor(): { color: string; size: number; alpha: number; pen: PenKind } {
   const t = toolState.tool
-  if (isPen(t)) return { ...PEN_DEFAULTS[t], alpha: 1, pen: t }
+  if (isPen(t)) return { ...settings.pens[t], alpha: 1, pen: t }
   if (t === 'strokeEraser') return { color: '#e02020', size: 2 / vp.zoom, alpha: 1, pen: 'felt' }
   return { color: '#2060e0', size: 40 / vp.zoom, alpha: 0.35, pen: 'felt' }
 }
@@ -138,22 +133,25 @@ function startText(sx: number, sy: number): void {
     .pop() ?? null
   if (hit) doc.remove(hit.id) // hide while the textarea stands in for it
   const at = hit ? toScreen(vp, hit.x, hit.y) : [sx, sy] as [number, number]
-  const fs = hit?.fontSize ?? TEXT_FONT_SIZE
+  const fs = hit?.fontSize ?? settings.textSize
   editing = true
   openTextEditor(
     board,
     at,
     hit,
-    { fontSizePx: fs * vp.zoom, color: hit?.color ?? TEXT_COLOR },
+    { fontSizePx: fs * vp.zoom, color: hit?.color ?? settings.textColor },
     (text) => {
       editing = false
+      toolbar.refresh()
       const [x, y] = toWorld(vp, at[0], at[1])
-      const c = textChange(hit, text, { x, y, color: TEXT_COLOR, fontSize: TEXT_FONT_SIZE })
+      const c = textChange(hit, text, { x, y, color: settings.textColor, fontSize: settings.textSize })
       if (c) history.apply(c)
       else if (hit) doc.add(hit)
+      toolbar.refresh()
     },
     () => {
       editing = false
+      toolbar.refresh()
       if (hit) doc.add(hit)
     },
   )
@@ -162,10 +160,10 @@ function startText(sx: number, sy: number): void {
 /** Manual shape drag: world start point plus the tool latched at strokeStart. */
 let shapeDrag: { tool: ShapeToolKind; a: [number, number] } | null = null
 
-/** Shapes use the last pen's current style (pen defaults until Task 13 wires Settings). */
+/** Shapes use the last pen's current style. */
 function shapeStyle(): StrokeStyle {
   const pen = toolState.lastPen
-  return { pen, color: PEN_DEFAULTS[pen].color, size: PEN_DEFAULTS[pen].size }
+  return { pen, color: settings.pens[pen].color, size: settings.pens[pen].size }
 }
 
 let current: { pen: PenKind; color: string; size: number; points: Pt[] } | null = null
@@ -208,7 +206,9 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
     x: ev.clientX - rect.left,
     y: ev.clientY - rect.top,
   }
+  let sessionChanged = false
   for (const a of router.handle(re)) {
+    if (a.kind === 'strokeStart' || a.kind === 'strokeEnd' || a.kind === 'strokeCancel') sessionChanged = true
     switch (a.kind) {
       case 'strokeStart': {
         if (editing) {
@@ -229,8 +229,8 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
           current = null
           eraseSession = null
           areaSession = new AreaEraseSession(doc, history)
-          areaSession.move(wx, wy, AREA_RADIUS_PX / vp.zoom)
-          live.cursor(a.x, a.y, AREA_RADIUS_PX)
+          areaSession.move(wx, wy, settings.eraserRadius / vp.zoom)
+          live.cursor(a.x, a.y, settings.eraserRadius)
           break
         }
         if (isShapeTool(toolState.tool)) {
@@ -262,8 +262,8 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         }
         if (areaSession) {
           const [wx, wy] = toWorld(vp, a.x, a.y)
-          areaSession.move(wx, wy, AREA_RADIUS_PX / vp.zoom)
-          live.cursor(a.x, a.y, AREA_RADIUS_PX)
+          areaSession.move(wx, wy, settings.eraserRadius / vp.zoom)
+          live.cursor(a.x, a.y, settings.eraserRadius)
           break
         }
         live.add(a.x, a.y, a.p)
@@ -300,7 +300,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         }
         if (areaSession) {
           const [wx, wy] = toWorld(vp, a.x, a.y)
-          areaSession.move(wx, wy, AREA_RADIUS_PX / vp.zoom)
+          areaSession.move(wx, wy, settings.eraserRadius / vp.zoom)
           areaSession.end()
           areaSession = null
           live.clear()
@@ -340,14 +340,48 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         setView(zoomAt(vp, a.cx, a.cy, a.factor))
         break
       case 'hover':
-        if (toolState.tool === 'areaEraser') live.cursor(a.x, a.y, AREA_RADIUS_PX)
+        if (toolState.tool === 'areaEraser') live.cursor(a.x, a.y, settings.eraserRadius)
         else live.clear()
         break
       default:
         break
     }
   }
+  if (sessionChanged) toolbar.refresh()
 }
+
+/** True while any stroke / eraser / shape / text session is open; undo and redo are blocked then. */
+const sessionActive = (): boolean =>
+  !!(current || eraseSession || areaSession || shapeDrag || textDrag || editing)
+
+function undoRedo(redo: boolean): void {
+  if (sessionActive()) return
+  if (redo) history.redo()
+  else history.undo()
+  renderer.requestDraw()
+  toolbar.refresh()
+}
+
+const toolbarEl = document.getElementById('toolbar') as HTMLDivElement
+const popover = mountPopover(app, toolbarEl, () => settings, settingsChanged)
+const toolbar = mountToolbar(
+  toolbarEl,
+  () => toolState,
+  (t) => {
+    popover.close()
+    setTool(selectTool(toolState, t))
+  },
+  () => undoRedo(false),
+  () => undoRedo(true),
+  {
+    canUndo: () => history.canUndo() && !sessionActive(),
+    canRedo: () => history.canRedo() && !sessionActive(),
+    onActiveTap: (t, anchor) => {
+      if (isPen(t) || t === 'text' || t === 'areaEraser') popover.open(t, anchor)
+    },
+    colorOf: (p) => settings.pens[p].color,
+  },
+)
 
 for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'pointerleave'] as const) {
   board.addEventListener(type, (e) => {
