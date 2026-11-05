@@ -48,6 +48,30 @@ describe('boards home', () => {
     expect(el.querySelector('.new-board')!.textContent).toBe('+ New board')
     expect(el.querySelector('.boards-empty')).not.toBeNull()
   })
+
+  it('shows a retry message instead of a blank view when listing boards fails, and retry works', async () => {
+    await createBoard(db, 'Alpha')
+    const spy = vi.spyOn(db, 'listBoards').mockRejectedValueOnce(new Error('idb down'))
+    await mountBoardsHome(el, db, () => {})
+    const err = el.querySelector('.boards-error')
+    expect(err).not.toBeNull()
+    expect(err!.textContent).toContain('Could not load boards')
+    el.querySelector<HTMLButtonElement>('.boards-retry')!.click()
+    await vi.waitFor(() => expect(el.querySelectorAll('.board-card')).toHaveLength(1))
+    expect(el.querySelector('.boards-error')).toBeNull()
+    spy.mockRestore()
+  })
+
+  it('"+ New board" failing reports through onError instead of an unhandled rejection', async () => {
+    await createBoard(db, 'Alpha')
+    const onOpen = vi.fn()
+    const onError = vi.fn()
+    await mountBoardsHome(el, db, onOpen, onError)
+    vi.spyOn(db, 'putBoard').mockRejectedValueOnce(new Error('quota'))
+    el.querySelector<HTMLButtonElement>('.new-board')!.click()
+    await vi.waitFor(() => expect(onError).toHaveBeenCalled())
+    expect(onOpen).not.toHaveBeenCalled()
+  })
 })
 
 describe('in-app dialogs', () => {

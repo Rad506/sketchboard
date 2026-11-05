@@ -40,9 +40,31 @@ function card(b: BoardMeta, now: number, onOpen: (id: string) => void): HTMLElem
   return el
 }
 
-/** Renders the boards list into `el` (replacing its contents). */
-export async function mountBoardsHome(el: HTMLElement, db: Db, onOpen: (id: string) => void): Promise<void> {
-  const boards = await db.listBoards()
+/**
+ * Renders the boards list into `el` (replacing its contents). If the list can't be read, shows a retry
+ * message; if "+ New board" fails, `onError` is called.
+ */
+export async function mountBoardsHome(
+  el: HTMLElement, db: Db, onOpen: (id: string) => void, onError?: () => void,
+): Promise<void> {
+  let boards: BoardMeta[]
+  try {
+    boards = await db.listBoards()
+  } catch {
+    onError?.()
+    const box = document.createElement('div')
+    box.className = 'boards-error'
+    const msg = document.createElement('p')
+    msg.textContent = 'Could not load boards'
+    const retry = document.createElement('button')
+    retry.type = 'button'
+    retry.className = 'boards-retry'
+    retry.textContent = 'Retry'
+    retry.addEventListener('click', () => void mountBoardsHome(el, db, onOpen, onError))
+    box.append(msg, retry)
+    el.replaceChildren(box)
+    return
+  }
   for (const u of thumbUrls) URL.revokeObjectURL(u)
   thumbUrls = []
   el.replaceChildren()
@@ -61,6 +83,8 @@ export async function mountBoardsHome(el: HTMLElement, db: Db, onOpen: (id: stri
     creating = true
     try {
       onOpen((await createBoard(db)).id)
+    } catch {
+      onError?.()
     } finally {
       creating = false
     }
