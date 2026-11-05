@@ -49,3 +49,19 @@ export function pushRecent(recent: string[], hex: string): string[] {
   const h = hex.toLowerCase()
   return [h, ...recent.filter((c) => c.toLowerCase() !== h)].slice(0, MAX_RECENT)
 }
+
+/** Copy persisted settings into `target` in place, tolerating missing/odd fields and clamping sizes. */
+export function applyLoadedSettings(target: Settings, loaded: Partial<Settings> | undefined): void {
+  if (!loaded) return
+  for (const pen of ['ink', 'felt', 'highlighter'] as PenKind[]) {
+    const p = loaded.pens?.[pen]
+    if (!p) continue
+    if (typeof p.color === 'string') target.pens[pen].color = p.color
+    target.pens[pen].size = clampSize(pen, p.size)
+  }
+  if (typeof loaded.textColor === 'string') target.textColor = loaded.textColor
+  if (loaded.textSize !== undefined) target.textSize = clampTextSize(loaded.textSize)
+  if (loaded.eraserRadius !== undefined) target.eraserRadius = clampEraserRadius(loaded.eraserRadius)
+  if (typeof loaded.fingerDraw === 'boolean') target.fingerDraw = loaded.fingerDraw
+  if (Array.isArray(loaded.recent)) target.recent = loaded.recent.filter((c) => typeof c === 'string').slice(0, MAX_RECENT)
+}

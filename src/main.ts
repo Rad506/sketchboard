@@ -16,7 +16,9 @@ import { StrokeEraseSession } from './tools/strokeEraser'
 import { AreaEraseSession } from './tools/areaEraser'
 import { dragToObject, type ShapeToolKind } from './tools/shapeTool'
 import { textChange, openTextEditor } from './tools/textTool'
-import { defaultSettings } from './core/settings'
+import { applyLoadedSettings, defaultSettings } from './core/settings'
+import { openDb, openInitialBoard, type Db } from './storage/db'
+import { Autosave, wireAutosave } from './storage/autosave'
 import { mountToolbar } from './ui/toolbar'
 import { mountPopover } from './ui/penPopover'
 import { SnapController, recognizedToObject, commitStroke } from './tools/snapController'
@@ -40,7 +42,7 @@ const updateSW = registerSW({
 
 const app = document.getElementById('app')!
 app.innerHTML = `
-  <div id="topbar"><span id="badge"></span></div>
+  <div id="topbar"><span id="badge"></span><span id="save-status" hidden>Not saving — storage unavailable</span></div>
   <div id="board">
     <canvas id="main-canvas"></canvas>
     <canvas id="live-canvas"></canvas>
@@ -125,6 +127,7 @@ const isShapeTool = (t: Tool): t is ShapeToolKind =>
 /** Text tool: screen start of a possible tap, and the open editor's finisher. */
 let textDrag: { sx: number; sy: number } | null = null
 let editing = false
+let commitOpenEdit: (() => void) | null = null
 let suppressTap = false
 
 function startText(sx: number, sy: number): void {
@@ -137,13 +140,14 @@ function startText(sx: number, sy: number): void {
   const at = hit ? toScreen(vp, hit.x, hit.y) : [sx, sy] as [number, number]
   const fs = hit?.fontSize ?? settings.textSize
   editing = true
-  openTextEditor(
+  const handle = openTextEditor(
     board,
     at,
     hit,
     { fontSizePx: fs * vp.zoom, color: hit?.color ?? settings.textColor },
     (text) => {
       editing = false
+      commitOpenEdit = null
       toolbar.refresh()
       const [x, y] = toWorld(vp, at[0], at[1])
       const c = textChange(hit, text, { x, y, color: settings.textColor, fontSize: settings.textSize })
@@ -153,10 +157,12 @@ function startText(sx: number, sy: number): void {
     },
     () => {
       editing = false
+      commitOpenEdit = null
       toolbar.refresh()
       if (hit) doc.add(hit)
     },
   )
+  commitOpenEdit = () => handle.commit()
 }
 
 /** Manual shape drag: world start point plus the tool latched at strokeStart. */
@@ -398,3 +404,60 @@ for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 
     }
   })
 }
+
+/**
+ * Storage: single board for now (Task 15 adds the home screen). Load first, THEN subscribe
+ * autosave, so loading doesn't re-save everything. If storage is unavailable the app still draws.
+ */
+const saveStatus = document.getElementById('save-status') as HTMLElement
+const showStatus = (s: 'ok' | 'unavailable'): void => {
+  saveStatus.hidden = s === 'ok'
+}
+
+async function initStorage(): Promise<void> {
+  let db: Db | null = null
+  try {
+    db = await openDb()
+  } catch {
+    new Autosave(null, '', showStatus)
+    return
+  }
+  try {
+    applyLoadedSettings(settings, await db.loadSettings())
+    toolbar.refresh()
+  } catch {
+    // keep defaults
+  }
+
+  let autosave: Autosave
+  try {
+    const meta = await openInitialBoard(db)
+    const objs = await db.loadObjects(meta.id)
+    const early = doc.all() // drawn in the few ms before load finished
+    for (const o of objs) doc.add(o)
+    setView(meta.viewport)
+    renderer.requestDraw()
+    autosave = new Autosave(db, meta.id, showStatus, objs.map((o) => o.id))
+    // a text being edited is out of the doc; finish it first so a backgrounded app keeps it
+    wireAutosave(doc, autosave, () => commitOpenEdit?.())
+    if (early.length) autosave.queue(early, [])
+  } catch {
+    new Autosave(null, '', showStatus)
+    return
+  }
+
+  let settingsTimer: ReturnType<typeof setTimeout> | null = null
+  const saveSettingsNow = (): void => {
+    if (settingsTimer) clearTimeout(settingsTimer)
+    settingsTimer = null
+    db!.saveSettings(structuredClone(settings)).catch(() => showStatus('unavailable'))
+  }
+  onSettingsChange(() => {
+    if (settingsTimer) clearTimeout(settingsTimer)
+    settingsTimer = setTimeout(saveSettingsNow, 500)
+  })
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && settingsTimer) saveSettingsNow()
+  })
+}
+void initStorage()

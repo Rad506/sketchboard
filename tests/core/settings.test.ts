@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { defaultSettings, clampSize, pushRecent } from '../../src/core/settings'
+import { defaultSettings, clampSize, pushRecent, applyLoadedSettings } from '../../src/core/settings'
 
 describe('settings', () => {
   it('defaults match spec', () => {
@@ -38,5 +38,24 @@ describe('settings', () => {
     for (let i = 0; i < 12; i++) r = pushRecent(r, `#0000${i.toString(16).padStart(2, '0')}`)
     expect(r).toHaveLength(8)
     expect(r[0]).toBe('#00000b')
+  })
+
+  it('applyLoadedSettings merges in place, clamps, ignores junk', () => {
+    const t = defaultSettings()
+    const ref = t.pens
+    applyLoadedSettings(t, {
+      pens: { ink: { size: 999, color: '#123456' } },
+      fingerDraw: true,
+      textSize: 5,
+      recent: ['#111111', 7 as unknown as string],
+    } as never)
+    expect(t.pens).toBe(ref)
+    expect(t.pens.ink).toEqual({ size: 30, color: '#123456' })
+    expect(t.pens.felt).toEqual(defaultSettings().pens.felt)
+    expect(t.fingerDraw).toBe(true)
+    expect(t.textSize).toBe(12)
+    expect(t.recent).toEqual(['#111111'])
+    applyLoadedSettings(t, undefined)
+    expect(t.fingerDraw).toBe(true)
   })
 })

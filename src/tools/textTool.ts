@@ -31,7 +31,7 @@ export function openTextEditor(
   style: EditorStyle,
   onDone: (text: string) => void,
   onCancel: () => void = () => {},
-): void {
+): { commit: () => void } {
   const ta = document.createElement('textarea')
   ta.className = 'text-editor'
   ta.value = initial?.text ?? ''
@@ -75,4 +75,5 @@ export function openTextEditor(
   boardEl.appendChild(ta)
   grow()
   ta.focus()
+  return { commit: () => finish(true) }
 }
