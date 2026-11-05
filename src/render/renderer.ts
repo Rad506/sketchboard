@@ -7,6 +7,10 @@ export class Renderer {
   private ctx: CanvasRenderingContext2D | null
   private vp: Viewport = { x: 0, y: 0, zoom: 1 }
   private pending = false
+  /** True while the view is moving: felt shadow blur is skipped, then restored when it settles. */
+  private moving = false
+  private settle: ReturnType<typeof setTimeout> | null = null
+  private afterDraw: (() => void)[] = []
 
   constructor(private canvas: HTMLCanvasElement, private doc: BoardDoc) {
     this.ctx = canvas.getContext('2d')
@@ -24,15 +28,27 @@ export class Renderer {
 
   setViewport(vp: Viewport): void {
     this.vp = vp
+    this.moving = true
+    if (this.settle) clearTimeout(this.settle)
+    this.settle = setTimeout(() => {
+      this.settle = null
+      this.moving = false
+      this.requestDraw()
+    }, 150)
     this.requestDraw()
   }
 
-  requestDraw(): void {
+  /** `after` runs right after the next frame's draw (e.g. clear the live layer once the committed stroke is visible). */
+  requestDraw(after?: () => void): void {
+    if (after) this.afterDraw.push(after)
     if (this.pending) return
     this.pending = true
     requestAnimationFrame(() => {
       this.pending = false
       this.draw()
+      const cbs = this.afterDraw
+      this.afterDraw = []
+      for (const cb of cbs) cb()
     })
   }
 
@@ -47,6 +63,6 @@ export class Renderer {
     const w = this.canvas.width / dpr / zoom
     const h = this.canvas.height / dpr / zoom
     const visible = this.doc.query({ minX: x, minY: y, maxX: x + w, maxY: y + h })
-    for (const o of renderOrder(visible)) drawObject(c, o)
+    for (const o of renderOrder(visible)) drawObject(c, o, { fast: this.moving })
   }
 }
