@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { inkOutline, renderOrder } from '../../src/render/pens'
+import { drawPenStroke, inkOutline, renderOrder } from '../../src/render/pens'
 import type { BoardObject, Pt } from '../../src/core/types'
 
 const box = { minX: 0, minY: 0, maxX: 1, maxY: 1 }
@@ -38,5 +38,32 @@ describe('renderOrder', () => {
       shape('h1', 'highlighter', 3), stroke('b', 'felt', 5),
     ]
     expect(renderOrder(objs).map((o) => o.id)).toEqual(['h1', 'h2', 'a', 's', 'b'])
+  })
+})
+
+describe('highlighter single tap', () => {
+  const recCtx = () => {
+    const calls: string[] = []
+    const ctx = new Proxy({} as Record<string, unknown>, {
+      get: (o, k: string) => (k in o ? o[k] : (...a: unknown[]) => void calls.push(k + ':' + a.join(','))),
+      set: (o, k: string, v) => ((o[k] = v), true),
+    }) as unknown as CanvasRenderingContext2D
+    return { ctx, calls }
+  }
+  it('draws a visible filled square of the pen size for a one-point stroke', () => {
+    const { ctx, calls } = recCtx()
+    drawPenStroke(ctx, 'highlighter', '#ffe14d', 24, [[100, 50, 0.5]])
+    expect(calls).toContain('fillRect:88,38,24,24')
+  })
+  it('also for a stroke whose points are all identical', () => {
+    const { ctx, calls } = recCtx()
+    drawPenStroke(ctx, 'highlighter', '#ffe14d', 10, [[5, 5, 0.5], [5, 5, 0.6]])
+    expect(calls).toContain('fillRect:0,0,10,10')
+  })
+  it('a moving highlighter stroke still uses the line path, not a dot', () => {
+    const { ctx, calls } = recCtx()
+    drawPenStroke(ctx, 'highlighter', '#ffe14d', 10, [[0, 0, 0.5], [20, 0, 0.5]])
+    expect(calls.some((c) => c.startsWith('fillRect'))).toBe(false)
+    expect(calls).toContain('stroke:')
   })
 })

@@ -118,6 +118,11 @@ export function drawPenStroke(
     ctx.fillStyle = color
     ctx.globalAlpha = alphaMul
     fillOutline(ctx, inkOutline(pts, size))
+  } else if (pen === 'highlighter' && pts.length > 0 && pts.every((p) => p[0] === pts[0][0] && p[1] === pts[0][1])) {
+    // a butt-capped zero-length line draws nothing, so a tap gets a filled square of the pen size
+    ctx.fillStyle = color
+    ctx.globalAlpha = HIGHLIGHTER_ALPHA * alphaMul
+    ctx.fillRect(pts[0][0] - size / 2, pts[0][1] - size / 2, size, size)
   } else {
     applyLineLook(ctx, pen, color, size, alphaMul, opts.fast)
     polyline(ctx, pts)
