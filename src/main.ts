@@ -9,15 +9,19 @@ import { applySideGesture, selectTool, type PenKind, type Tool, type ToolState }
 import { BoardDoc } from './core/board'
 import { History } from './core/history'
 import { bboxOf, newId } from './core/geometry'
-import { panBy, toWorld, zoomAt, type Viewport } from './core/viewport'
-import type { Pt, StrokeObj } from './core/types'
+import { panBy, toScreen, toWorld, zoomAt, type Viewport } from './core/viewport'
+import type { Pt, StrokeObj, TextObj } from './core/types'
 import { Renderer } from './render/renderer'
 import { PEN_DEFAULTS } from './render/pens'
 import { StrokeEraseSession } from './tools/strokeEraser'
 import { AreaEraseSession } from './tools/areaEraser'
 import { dragToObject, type ShapeToolKind } from './tools/shapeTool'
+import { textChange, openTextEditor } from './tools/textTool'
 import { SnapController, recognizedToObject, commitStroke } from './tools/snapController'
 
+const TEXT_FONT_SIZE = 24 // Task 13 makes text size/colour settings (Ruling R3)
+const TEXT_COLOR = '#000000'
+const TAP_SLOP_PX = 6
 const AREA_RADIUS_PX = 20 // default; Task 13 makes this a setting (5-80)
 
 const updateSW = registerSW({
@@ -79,7 +83,7 @@ const isPen = (t: Tool): t is PenKind => t === 'ink' || t === 'felt' || t === 'h
 
 // Temporary key bindings until the toolbar (Task 13): 1 ink, 2 felt, 3 highlighter, 4 ellipse, 5 triangle, 6 rect, 7 arrow.
 const KEY_TOOLS: Record<string, Tool> = {
-  '1': 'ink', '2': 'felt', '3': 'highlighter', '4': 'ellipse', '5': 'triangle', '6': 'rect', '7': 'arrow',
+  '1': 'ink', '2': 'felt', '3': 'highlighter', '4': 'ellipse', '5': 'triangle', '6': 'rect', '7': 'arrow', '8': 'text',
 }
 window.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'y')) {
@@ -89,6 +93,7 @@ window.addEventListener('keydown', (e) => {
     renderer.requestDraw()
     return
   }
+  if (editing || (e.target as HTMLElement | null)?.tagName === 'TEXTAREA') return
   const tool = KEY_TOOLS[e.key]
   if (!tool) return
   toolState = selectTool(toolState, tool)
@@ -119,6 +124,40 @@ let eraseSession: StrokeEraseSession | null = null
 let areaSession: AreaEraseSession | null = null
 const isShapeTool = (t: Tool): t is ShapeToolKind =>
   t === 'ellipse' || t === 'triangle' || t === 'rect' || t === 'arrow'
+
+/** Text tool: screen start of a possible tap, and the open editor's finisher. */
+let textDrag: { sx: number; sy: number } | null = null
+let editing = false
+let suppressTap = false
+
+function startText(sx: number, sy: number): void {
+  const [wx, wy] = toWorld(vp, sx, sy)
+  const hit = doc
+    .query({ minX: wx, minY: wy, maxX: wx, maxY: wy })
+    .filter((o): o is TextObj => o.kind === 'text')
+    .pop() ?? null
+  if (hit) doc.remove(hit.id) // hide while the textarea stands in for it
+  const at = hit ? toScreen(vp, hit.x, hit.y) : [sx, sy] as [number, number]
+  const fs = hit?.fontSize ?? TEXT_FONT_SIZE
+  editing = true
+  openTextEditor(
+    board,
+    at,
+    hit,
+    { fontSizePx: fs * vp.zoom, color: hit?.color ?? TEXT_COLOR },
+    (text) => {
+      editing = false
+      const [x, y] = toWorld(vp, at[0], at[1])
+      const c = textChange(hit, text, { x, y, color: TEXT_COLOR, fontSize: TEXT_FONT_SIZE })
+      if (c) history.apply(c)
+      else if (hit) doc.add(hit)
+    },
+    () => {
+      editing = false
+      if (hit) doc.add(hit)
+    },
+  )
+}
 
 /** Manual shape drag: world start point plus the tool latched at strokeStart. */
 let shapeDrag: { tool: ShapeToolKind; a: [number, number] } | null = null
@@ -172,6 +211,17 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
   for (const a of router.handle(re)) {
     switch (a.kind) {
       case 'strokeStart': {
+        if (editing) {
+          // this tap only finishes the open edit
+          ;(document.activeElement as HTMLElement | null)?.blur()
+          suppressTap = true
+          textDrag = null
+          break
+        }
+        if (toolState.tool === 'text') {
+          textDrag = { sx: a.x, sy: a.y }
+          break
+        }
         const s = styleFor()
         live.clear()
         const [wx, wy] = toWorld(vp, a.x, a.y)
@@ -204,6 +254,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         break
       }
       case 'strokeMove': {
+        if (textDrag || suppressTap) break
         if (shapeDrag) {
           const [wx, wy] = toWorld(vp, a.x, a.y)
           live.setPreview(dragToObject(shapeDrag.tool, shapeDrag.a, [wx, wy], shapeStyle()))
@@ -229,6 +280,16 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         break
       }
       case 'strokeEnd': {
+        if (suppressTap) {
+          suppressTap = false
+          break
+        }
+        if (textDrag) {
+          const d = textDrag
+          textDrag = null
+          if (Math.hypot(a.x - d.sx, a.y - d.sy) < TAP_SLOP_PX) startText(d.sx, d.sy)
+          break
+        }
         if (shapeDrag) {
           const [wx, wy] = toWorld(vp, a.x, a.y)
           const obj = dragToObject(shapeDrag.tool, shapeDrag.a, [wx, wy], shapeStyle())
@@ -261,6 +322,8 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         break
       }
       case 'strokeCancel':
+        textDrag = null
+        suppressTap = false
         shapeDrag = null
         areaSession?.end() // already-cut objects stay cut, so keep them undoable
         areaSession = null
@@ -288,6 +351,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
 
 for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'pointerleave'] as const) {
   board.addEventListener(type, (e) => {
+    if ((e.target as HTMLElement).tagName === 'TEXTAREA') return // events inside the editor are the editor's
     if (e.pointerType === 'pen') detector.handle(toSample(e))
     if (type === 'pointermove') {
       const list = e.getCoalescedEvents?.()
