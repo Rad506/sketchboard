@@ -31,6 +31,8 @@ function resize(): void {
   for (const c of [mainCanvas, liveCanvas]) {
     c.width = Math.round(w * dpr)
     c.height = Math.round(h * dpr)
+    c.style.width = `${w}px` // CSS size always equals the board, so backing store maps 1:1
+    c.style.height = `${h}px`
   }
   live.setDpr(dpr)
 }
