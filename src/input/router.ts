@@ -22,6 +22,8 @@ export class InputRouter {
   private touches = new Map<number, Pt>();
   private mode: Mode = 'idle';
   private touchDrawId: number | null = null;
+  /** Last pen sample of the active stroke, so it can be ended where it was if the pen never reports up. */
+  private lastPen: { x: number; y: number; p: number; t: number } | null = null;
 
   constructor(private opts: { fingerDraw: () => boolean }) {}
 

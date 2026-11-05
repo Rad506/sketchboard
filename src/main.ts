@@ -3,7 +3,7 @@ import { registerSW } from 'virtual:pwa-register'
 import { showUpdateBar } from './ui/updateBar'
 import { renderToolBadge } from './ui/toolBadge'
 import { LiveLayer, type StrokeStyle } from './render/liveLayer'
-import { InputRouter, type RouterEvent } from './input/router'
+import { InputRouter, type RouterAction, type RouterEvent } from './input/router'
 import { SideButtonDetector, type PenSample } from './input/sideButton'
 import { applySideGesture, selectTool, type PenKind, type Tool, type ToolState } from './core/toolState'
 import { BoardDoc } from './core/board'
@@ -26,6 +26,7 @@ import { mountBoardsHome } from './ui/boardsHome'
 import { confirmInApp, promptInApp } from './ui/confirm'
 import {
   contentBounds,
+  createBoard,
   deleteBoardFlow,
   ensureFirstBoard,
   makeThumbnail,
@@ -36,6 +37,7 @@ import {
 import { exportRect, renderPng, shareFileName, shareOrDownload } from './export/sharePng'
 import { chooseShareMode } from './ui/shareSheet'
 import { showToast } from './ui/toast'
+import { seedStressStrokes } from './core/stress'
 import { SnapController, recognizedToObject, commitStroke } from './tools/snapController'
 
 const TAP_SLOP_PX = 6
@@ -231,8 +233,22 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
     x: ev.clientX - rect.left,
     y: ev.clientY - rect.top,
   }
+  applyActions(router.handle(re))
+}
+
+/** Live-layer clear scheduled after the next committed draw is dropped if a newer stroke has started since. */
+let liveEpoch = 0
+/** On lift the committed stroke only appears at the next frame, so clear the (desynchronized) live layer after that draw to avoid a blink. */
+function clearLiveAfterDraw(): void {
+  const epoch = liveEpoch
+  renderer.requestDraw(() => {
+    if (epoch === liveEpoch) live.clear()
+  })
+}
+
+function applyActions(actions: RouterAction[]): void {
   let sessionChanged = false
-  for (const a of router.handle(re)) {
+  for (const a of actions) {
     if (a.kind === 'strokeStart' || a.kind === 'strokeEnd' || a.kind === 'strokeCancel') sessionChanged = true
     switch (a.kind) {
       case 'strokeStart': {
@@ -248,6 +264,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
           break
         }
         const s = styleFor()
+        liveEpoch++
         live.clear()
         const [wx, wy] = toWorld(vp, a.x, a.y)
         if (toolState.tool === 'areaEraser') {
@@ -275,7 +292,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
         eraseSession?.move(wx, wy, 6 / vp.zoom)
         snap.cancel()
         currentXY = [[wx, wy]]
-        if (current) snap.sample(a.x, a.y, ev.timeStamp, currentXY)
+        if (current) snap.sample(a.x, a.y, a.t, currentXY)
         break
       }
       case 'strokeMove': {
@@ -300,7 +317,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
           const [wx, wy] = toWorld(vp, a.x, a.y)
           current.points.push([wx, wy, a.p])
           currentXY.push([wx, wy])
-          snap.sample(a.x, a.y, ev.timeStamp, currentXY)
+          snap.sample(a.x, a.y, a.t, currentXY)
         }
         break
       }
@@ -320,7 +337,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
           const obj = dragToObject(shapeDrag.tool, shapeDrag.a, [wx, wy], shapeStyle())
           shapeDrag = null
           if (obj) history.apply({ add: [obj], remove: [] })
-          live.clear()
+          clearLiveAfterDraw()
           break
         }
         if (areaSession) {
@@ -328,7 +345,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
           areaSession.move(wx, wy, settings.eraserRadius / vp.zoom)
           areaSession.end()
           areaSession = null
-          live.clear()
+          clearLiveAfterDraw()
           break
         }
         if (eraseSession) {
@@ -343,7 +360,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
           if (last[0] !== wx || last[1] !== wy) current.points.push([wx, wy, last[2]]) // pointerup reports pressure 0
         }
         commitCurrent()
-        live.clear()
+        clearLiveAfterDraw()
         break
       }
       case 'strokeCancel':
@@ -407,6 +424,17 @@ const toolbar = mountToolbar(
     colorOf: (p) => settings.pens[p].color,
   },
 )
+
+/**
+ * Android can hide the app mid-stroke without a pointercancel. Finish the open stroke / erase / shape
+ * session exactly like a pen-up (so it is committed and autosaved) and reset the router so no pen stays "down".
+ * Registered before the autosave listeners, so the commit lands before they flush.
+ */
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'hidden') return
+  textDrag = null // a text tap cut short by hiding must not pop an editor open
+  applyActions(router.reset())
+})
 
 for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'pointerleave'] as const) {
   board.addEventListener(type, (e) => {
@@ -494,17 +522,55 @@ async function leaveBoard(): Promise<void> {
   }
 }
 
+/**
+ * Android Back: opening a board pushes one history entry; Back pops it and lands on home.
+ * Leaving through the UI pops the entry itself (silently) so Back on home behaves normally.
+ */
+let boardEntry = false
+let silentPops = 0
+function pushBoardEntry(): void {
+  if (boardEntry) return
+  try {
+    window.history.pushState({ sketchboard: 'board' }, '')
+    boardEntry = true
+  } catch {
+    // history unavailable: Back just behaves as before
+  }
+}
+function popBoardEntry(): void {
+  if (!boardEntry) return
+  boardEntry = false
+  silentPops++
+  window.history.back()
+}
+window.addEventListener('popstate', () => {
+  if (silentPops > 0) {
+    silentPops--
+    return
+  }
+  boardEntry = false
+  if (app.dataset.view === 'board' && active) void showHome()
+})
+
 async function showHome(): Promise<void> {
   if (!db || busy) return
   busy = true
   try {
     await leaveBoard()
+    popBoardEntry()
     showView('home')
-    await mountBoardsHome(homeEl, db, (id) => {
-      void openBoard(id).then((ok) => {
-        if (!ok) void showHome()
-      })
-    })
+    await mountBoardsHome(
+      homeEl,
+      db,
+      (id) => {
+        void openBoard(id).then((ok) => {
+          if (!ok) void showHome()
+        })
+      },
+      () => showStatus('unavailable'),
+    )
+  } catch {
+    showStatus('unavailable')
   } finally {
     busy = false
   }
@@ -525,6 +591,7 @@ async function openBoard(id: string): Promise<boolean> {
     active = { meta, autosave, unwire }
     topbar.setName(meta.name)
     showView('board')
+    pushBoardEntry()
     setView(meta.viewport, false)
     toolbar.refresh()
     return true
@@ -575,12 +642,12 @@ async function deleteCurrent(): Promise<void> {
 
 async function shareBoard(): Promise<void> {
   commitOpenEdit?.()
-  const mode = await chooseShareMode()
-  if (!mode) return
   if (doc.all().length === 0) {
     showToast('Nothing to share yet')
     return
   }
+  const mode = await chooseShareMode()
+  if (!mode) return
   const dpr = window.devicePixelRatio || 1
   const rect = exportRect(contentBounds(doc), mode, vp, board.clientWidth, board.clientHeight, dpr)
   if (!rect) {
@@ -591,7 +658,8 @@ async function shareBoard(): Promise<void> {
     const blob = await renderPng(doc, rect)
     if (rect.capped) showToast('Board is large — text may be small; try Current view', 4000)
     const name = shareFileName(active?.meta.name ?? 'Sketchboard', new Date())
-    await shareOrDownload(blob, name)
+    const how = await shareOrDownload(blob, name)
+    if (how === 'downloaded') showToast('Saved to Downloads')
   } catch {
     showToast('Could not create the image')
   }
@@ -624,6 +692,25 @@ function noStorage(): void {
   showView('board')
 }
 
+/** `?stress=2000` seeds that many random strokes into a new "Stress test" board (for perf checks on the phone). */
+function stressCount(): number {
+  const n = Number.parseInt(new URLSearchParams(location.search).get('stress') ?? '', 10)
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 50_000) : 0
+}
+
+async function seedStressBoard(d: Db, n: number): Promise<string> {
+  const meta = await createBoard(d, 'Stress test')
+  await d.writeChanges(meta.id, seedStressStrokes(n, Date.now() & 0xffff), [])
+  try {
+    const url = new URL(location.href)
+    url.searchParams.delete('stress')
+    window.history.replaceState(null, '', url) // a reload must not seed a second board
+  } catch {
+    // ignore
+  }
+  return meta.id
+}
+
 async function initStorage(): Promise<void> {
   try {
     db = await openDb()
@@ -632,6 +719,7 @@ async function initStorage(): Promise<void> {
     noStorage()
     return
   }
+  void navigator.storage?.persist?.() // ask the browser not to evict our boards under storage pressure
   try {
     applyLoadedSettings(settings, await db.loadSettings())
     toolbar.refresh()
@@ -657,7 +745,12 @@ async function initStorage(): Promise<void> {
 
   let opened = false
   try {
-    opened = await openBoard((await ensureFirstBoard(db)).id)
+    const stress = stressCount()
+    if (stress) {
+      opened = await openBoard(await seedStressBoard(db, stress))
+      if (opened) fitContent()
+    }
+    if (!opened) opened = await openBoard((await ensureFirstBoard(db)).id)
   } catch {
     opened = false
   }
