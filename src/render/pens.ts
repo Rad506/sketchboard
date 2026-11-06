@@ -2,6 +2,7 @@ import { getStroke } from 'perfect-freehand'
 import { outlineOf } from '../core/geometry'
 import type { BoardObject, Pt, StrokeObj } from '../core/types'
 import type { PenKind } from '../core/toolState'
+import { haloWidth, outlineColorFor } from './contrast'
 
 export const PEN_DEFAULTS: Record<PenKind, { size: number; color: string }> = {
   ink: { size: 3, color: '#000000' },
@@ -83,10 +84,21 @@ function traceOutline(p: Path2D | CanvasRenderingContext2D, out: [number, number
   p.closePath()
 }
 
-function fillOutline(ctx: CanvasRenderingContext2D, out: [number, number][]): void {
+/** Strokes the shape edge in a contrasting colour first, so a light line stays visible on the light board. */
+function strokeHalo(ctx: CanvasRenderingContext2D, halo: string | null, size: number, path?: Path2D): void {
+  if (!halo) return
+  ctx.strokeStyle = halo
+  ctx.lineWidth = haloWidth(size) * 2
+  ctx.lineJoin = 'round'
+  if (path) ctx.stroke(path)
+  else ctx.stroke()
+}
+
+function fillOutline(ctx: CanvasRenderingContext2D, out: [number, number][], halo: string | null = null, size = 0): void {
   if (out.length === 0) return
   ctx.beginPath()
   traceOutline(ctx, out)
+  strokeHalo(ctx, halo, size)
   ctx.fill()
 }
 
@@ -105,8 +117,12 @@ function fillInkObject(ctx: CanvasRenderingContext2D, o: StrokeObj): void {
     }
     inkCache.set(o, hit)
   }
-  if (Array.isArray(hit)) fillOutline(ctx, hit)
-  else ctx.fill(hit)
+  const halo = outlineColorFor(o.color, o.pen)
+  if (Array.isArray(hit)) fillOutline(ctx, hit, halo, o.size)
+  else {
+    strokeHalo(ctx, halo, o.size, hit)
+    ctx.fill(hit)
+  }
 }
 
 /** Draws one pen stroke in whatever coordinate space the caller has set up. */
@@ -117,17 +133,30 @@ export function drawPenStroke(
   if (pen === 'ink') {
     ctx.fillStyle = color
     ctx.globalAlpha = alphaMul
-    fillOutline(ctx, inkOutline(pts, size))
+    fillOutline(ctx, inkOutline(pts, size), outlineColorFor(color, pen), size)
   } else if (pen === 'highlighter' && pts.length > 0 && pts.every((p) => p[0] === pts[0][0] && p[1] === pts[0][1])) {
     // a butt-capped zero-length line draws nothing, so a tap gets a filled square of the pen size
     ctx.fillStyle = color
     ctx.globalAlpha = HIGHLIGHTER_ALPHA * alphaMul
     ctx.fillRect(pts[0][0] - size / 2, pts[0][1] - size / 2, size, size)
   } else {
-    applyLineLook(ctx, pen, color, size, alphaMul, opts.fast)
-    polyline(ctx, pts)
+    strokeLines(ctx, pen, color, size, [pts], alphaMul, opts.fast)
   }
   ctx.restore()
+}
+
+/** Polylines in the pen look, with a wider contrasting pass underneath when the colour is hard to see. */
+function strokeLines(
+  ctx: CanvasRenderingContext2D, pen: PenKind, color: string, size: number,
+  lines: ArrayLike<number>[][], alphaMul: number, fast?: boolean,
+): void {
+  const halo = outlineColorFor(color, pen)
+  if (halo) {
+    applyLineLook(ctx, pen, halo, size + haloWidth(size) * 2, alphaMul, true)
+    for (const l of lines) polyline(ctx, l)
+  }
+  applyLineLook(ctx, pen, color, size, alphaMul, fast)
+  for (const l of lines) polyline(ctx, l)
 }
 
 /** World-coordinate drawing; the caller sets the transform. */
@@ -146,8 +175,7 @@ export function drawObject(ctx: CanvasRenderingContext2D, o: BoardObject, opts: 
     case 'shape':
     case 'arrow':
       ctx.save()
-      applyLineLook(ctx, o.pen, o.color, o.size, 1, opts.fast)
-      for (const line of outlineOf(o)) polyline(ctx, line)
+      strokeLines(ctx, o.pen, o.color, o.size, outlineOf(o), 1, opts.fast)
       ctx.restore()
       return
     case 'text': {
@@ -155,7 +183,17 @@ export function drawObject(ctx: CanvasRenderingContext2D, o: BoardObject, opts: 
       ctx.fillStyle = o.color
       ctx.font = `${o.fontSize}px system-ui`
       ctx.textBaseline = 'top'
-      o.text.split('\n').forEach((line, i) => ctx.fillText(line, o.x, o.y + i * o.fontSize * 1.2))
+      const halo = outlineColorFor(o.color, 'ink')
+      if (halo) {
+        ctx.strokeStyle = halo
+        ctx.lineWidth = Math.max(1, o.fontSize * 0.08) * 2
+        ctx.lineJoin = 'round'
+      }
+      o.text.split('\n').forEach((line, i) => {
+        const y = o.y + i * o.fontSize * 1.2
+        if (halo) ctx.strokeText(line, o.x, y)
+        ctx.fillText(line, o.x, y)
+      })
       ctx.restore()
       return
     }

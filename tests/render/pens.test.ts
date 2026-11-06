@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { drawPenStroke, inkOutline, renderOrder } from '../../src/render/pens'
+import { drawObject, drawPenStroke, inkOutline, renderOrder } from '../../src/render/pens'
 import type { BoardObject, Pt } from '../../src/core/types'
 
 const box = { minX: 0, minY: 0, maxX: 1, maxY: 1 }
@@ -65,5 +65,63 @@ describe('highlighter single tap', () => {
     drawPenStroke(ctx, 'highlighter', '#ffe14d', 10, [[0, 0, 0.5], [20, 0, 0.5]])
     expect(calls.some((c) => c.startsWith('fillRect'))).toBe(false)
     expect(calls).toContain('stroke:')
+  })
+})
+
+describe('low-contrast outline', () => {
+  // records what each stroke()/fill() call was drawn with
+  function recCtx() {
+    const calls: { op: string; style: string; width: number }[] = []
+    const ctx: any = {
+      strokeStyle: '', fillStyle: '', lineWidth: 1, globalAlpha: 1, lineCap: '', lineJoin: '', shadowColor: '', shadowBlur: 0,
+      font: '', textBaseline: '',
+      save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, quadraticCurveTo() {}, closePath() {}, fillRect() {},
+      stroke() { calls.push({ op: 'stroke', style: ctx.strokeStyle, width: ctx.lineWidth }) },
+      fill() { calls.push({ op: 'fill', style: ctx.fillStyle, width: 0 }) },
+      strokeText() { calls.push({ op: 'strokeText', style: ctx.strokeStyle, width: ctx.lineWidth }) },
+      fillText() { calls.push({ op: 'fillText', style: ctx.fillStyle, width: 0 }) },
+    }
+    return { ctx, calls }
+  }
+  const line: Pt[] = [[0, 0, 0.5], [50, 0, 0.5], [100, 10, 0.5]]
+
+  it('white ink on the white board is outlined in black before it is filled', () => {
+    const { ctx, calls } = recCtx()
+    drawPenStroke(ctx, 'ink', '#ffffff', 6, line)
+    expect(calls.map((c) => c.op)).toEqual(['stroke', 'fill'])
+    expect(calls[0].style).toBe('#000000')
+    expect(calls[1].style).toBe('#ffffff')
+  })
+
+  it('black ink is drawn without an outline', () => {
+    const { ctx, calls } = recCtx()
+    drawPenStroke(ctx, 'ink', '#000000', 6, line)
+    expect(calls.map((c) => c.op)).toEqual(['fill'])
+  })
+
+  it('a light felt line gets a wider black pass underneath', () => {
+    const { ctx, calls } = recCtx()
+    drawPenStroke(ctx, 'felt', '#fafafa', 10, line)
+    expect(calls.map((c) => c.op)).toEqual(['stroke', 'stroke'])
+    expect(calls[0]).toMatchObject({ style: '#000000' })
+    expect(calls[0].width).toBeGreaterThan(calls[1].width)
+    expect(calls[1].style).toBe('#fafafa')
+  })
+
+  it('highlighters are never outlined', () => {
+    const { ctx, calls } = recCtx()
+    drawPenStroke(ctx, 'highlighter', '#ffffff', 24, line)
+    expect(calls.map((c) => c.op)).toEqual(['stroke'])
+  })
+
+  it('light shapes and text get a black outline too', () => {
+    const { ctx, calls } = recCtx()
+    drawObject(ctx, { id: 's', createdAt: 1, bbox: box, kind: 'shape', shape: 'line', pen: 'felt', color: '#ffffff', size: 4, vertices: [[0, 0], [10, 10]] })
+    expect(calls.map((c) => c.op)).toEqual(['stroke', 'stroke'])
+    expect(calls[0].style).toBe('#000000')
+    const t = recCtx()
+    drawObject(t.ctx, { id: 't', createdAt: 1, bbox: box, kind: 'text', x: 0, y: 0, text: 'hi', color: '#ffffff', fontSize: 24 })
+    expect(t.calls.map((c) => c.op)).toEqual(['strokeText', 'fillText'])
+    expect(t.calls[0].style).toBe('#000000')
   })
 })
