@@ -53,7 +53,7 @@ Success means opening it from the home screen, drawing straight away with no lag
 - The S Pen draws. **Two fingers** pan and pinch-zoom. One finger does nothing, which protects against the palm, unless "Draw with finger" is switched on. In that mode one finger draws and two fingers still pan and zoom. 🟡
 - Zoom in up to 800 %; zoom out is practically unlimited (Enrico, 2026-11-06). Zoom is centred on the pinch point. ✅
 - A "fit to content" button sits in the board menu, so it's hard to get lost. 🟢
-- Coordinates are world units, and **1 world unit = 1 screen px at 100 % zoom**. Pen and text sizes are **screen px at the moment of drawing** (stored as size ÷ zoom in world units), so a line looks the same thickness when drawn at any zoom. 🟡
+- Coordinates are world units, and **1 world unit = 1 screen px at 100 % zoom**. Pen and text sizes are **board px**: an 8 px pen always makes an 8 px line on the board, whatever the zoom; it simply looks thicker zoomed in and thinner zoomed out (Enrico, 2026-11-06). ✅
 
 ### 3.2 Pens
 

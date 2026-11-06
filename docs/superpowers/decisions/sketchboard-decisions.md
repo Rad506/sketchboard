@@ -25,4 +25,6 @@ Infinite-board drawing app for Galaxy S25 Ultra + S Pen.
 | 13 | Location & method | `C:\DIY Software\SH\sketchboard\`, TDD (Vitest) for geometry/recognition/eraser logic | Global CLAUDE.md | 🟡 |
 | 15 | One-finger pan | With the pen away, one finger pans; while the pen hovers or touches, fingers are inert; the pen counts as gone after pointerleave or 1 s without pen events | Enrico asked (palm protection while writing) | ✅ |
 | 16 | Low-contrast outline | Lines and text with WCAG contrast < 2 against the board get a thin black (light board) / white (dark board) outline; highlighters never | Enrico asked | ✅ |
-| 17 | Zoom out | Practically unlimited zoom-out; new lines use screen-px size ÷ zoom so they stay visible; huge objects/queries bypass the spatial grid | Enrico asked | ✅ / size semantics 🟡 |
+| 17 | Zoom out | Practically unlimited zoom-out; huge objects/queries bypass the spatial grid | Enrico asked | ✅ |
+| 18 | Line size vs zoom | Pen/text sizes are fixed board px (8 px stays 8 px on the board at any zoom); the brief screen-px-÷-zoom experiment was reverted | Enrico asked | ✅ |
+| 19 | Handwriting → text | Not doing it (parked) | Enrico: "leave the writing to text" | ✅ |
