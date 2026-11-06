@@ -47,13 +47,23 @@ describe('BoardDoc', () => {
     d.onChange(cb);
     d.add(stroke('nan', 0, 0, NaN, 10));
     d.add(stroke('inf', 0, 0, Infinity, 10));
-    d.add(stroke('huge', 0, 0, 2e7, 10));
-    d.add(stroke('hugeY', -6e6, -6e6, 6e6, 6e6));
     expect(d.all()).toEqual([]);
     expect(cb).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledTimes(4);
-    d.add(stroke('ok', 0, 0, 9e6, 10)); // big but within the limit is still accepted
-    expect(d.get('ok')).toBeDefined();
+    expect(warn).toHaveBeenCalledTimes(2);
     warn.mockRestore();
+  });
+
+  it('huge objects (drawn while zoomed far out) are kept and found quickly', () => {
+    const d = new BoardDoc();
+    d.add(stroke('huge', 0, 0, 2e9, 10));
+    d.add(stroke('hugeY', -6e8, -6e8, 6e8, 6e8));
+    d.add(stroke('small', 5, 5, 20, 20));
+    const t0 = performance.now();
+    expect(d.query({ minX: 0, minY: 0, maxX: 30, maxY: 30 }).map((o) => o.id).sort()).toEqual(['huge', 'hugeY', 'small']);
+    // a query box spanning billions of units (view zoomed far out) must not walk the grid cell by cell
+    expect(d.query({ minX: -1e10, minY: -1e10, maxX: 1e10, maxY: 1e10 }).length).toBe(3);
+    expect(performance.now() - t0).toBeLessThan(200);
+    d.remove('huge');
+    expect(d.query({ minX: 0, minY: 0, maxX: 30, maxY: 30 }).map((o) => o.id).sort()).toEqual(['hugeY', 'small']);
   });
 });

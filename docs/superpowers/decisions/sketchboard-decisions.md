@@ -23,3 +23,6 @@ Infinite-board drawing app for Galaxy S25 Ultra + S Pen.
 | 12 | Saving | Auto-save on device (IndexedDB), undo/redo per board | — | 🟡 |
 | 14 | Share to Claude | ⋮ → Share → Whole board / Current view → PNG (2×, max 4096 px, white background) → Android share sheet → Claude app; download fallback | Enrico wants Claude to view and discuss his boards; an image is what Claude reads best | ✅ / details 🟡 |
 | 13 | Location & method | `C:\DIY Software\SH\sketchboard\`, TDD (Vitest) for geometry/recognition/eraser logic | Global CLAUDE.md | 🟡 |
+| 15 | One-finger pan | With the pen away, one finger pans; while the pen hovers or touches, fingers are inert; the pen counts as gone after pointerleave or 1 s without pen events | Enrico asked (palm protection while writing) | ✅ |
+| 16 | Low-contrast outline | Lines and text with WCAG contrast < 2 against the board get a thin black (light board) / white (dark board) outline; highlighters never | Enrico asked | ✅ |
+| 17 | Zoom out | Practically unlimited zoom-out; new lines use screen-px size ÷ zoom so they stay visible; huge objects/queries bypass the spatial grid | Enrico asked | ✅ / size semantics 🟡 |

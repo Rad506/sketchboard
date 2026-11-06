@@ -129,10 +129,10 @@ function toSample(e: PointerEvent): PenSample {
   }
 }
 
-/** Pen sizes are world units; eraser previews are screen px, so they divide by zoom. */
+/** Pen sizes are screen px at the moment of drawing (like Miro), so they divide by zoom: lines stay visible however far you zoom out. */
 function styleFor(): { color: string; size: number; alpha: number; pen: PenKind } {
   const t = toolState.tool
-  if (isPen(t)) return { ...settings.pens[t], alpha: 1, pen: t }
+  if (isPen(t)) return { color: settings.pens[t].color, size: settings.pens[t].size / vp.zoom, alpha: 1, pen: t }
   if (t === 'strokeEraser') return { color: '#e02020', size: 2 / vp.zoom, alpha: 1, pen: 'felt' }
   return { color: '#2060e0', size: 40 / vp.zoom, alpha: 0.35, pen: 'felt' }
 }
@@ -157,7 +157,7 @@ function startText(sx: number, sy: number): void {
     .pop() ?? null
   if (hit) doc.remove(hit.id) // hide while the textarea stands in for it
   const at = hit ? toScreen(vp, hit.x, hit.y) : [sx, sy] as [number, number]
-  const fs = hit?.fontSize ?? settings.textSize
+  const fs = hit?.fontSize ?? settings.textSize / vp.zoom
   editing = true
   const handle = openTextEditor(
     board,
@@ -169,7 +169,7 @@ function startText(sx: number, sy: number): void {
       commitOpenEdit = null
       toolbar.refresh()
       const [x, y] = toWorld(vp, at[0], at[1])
-      const c = textChange(hit, text, { x, y, color: settings.textColor, fontSize: settings.textSize })
+      const c = textChange(hit, text, { x, y, color: settings.textColor, fontSize: settings.textSize / vp.zoom })
       if (c) history.apply(c)
       else if (hit) doc.add(hit)
       toolbar.refresh()
@@ -190,7 +190,7 @@ let shapeDrag: { tool: ShapeToolKind; a: [number, number] } | null = null
 /** Shapes use the last pen's current style. */
 function shapeStyle(): StrokeStyle {
   const pen = toolState.lastPen
-  return { pen, color: settings.pens[pen].color, size: settings.pens[pen].size }
+  return { pen, color: settings.pens[pen].color, size: settings.pens[pen].size / vp.zoom }
 }
 
 let current: { pen: PenKind; color: string; size: number; points: Pt[] } | null = null

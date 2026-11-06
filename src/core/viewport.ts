@@ -6,7 +6,8 @@ export interface Viewport {
   zoom: number;
 }
 
-export const MIN_ZOOM = 0.1;
+/** Practically unlimited zoom-out (a finite floor keeps the maths safe). */
+export const MIN_ZOOM = 1e-12;
 export const MAX_ZOOM = 8;
 
 const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));

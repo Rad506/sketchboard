@@ -20,10 +20,14 @@ describe('viewport', () => {
     expect(after[1]).toBeCloseTo(before[1], 9);
   });
 
-  it('zoomAt clamps to 0.1 and 8', () => {
+  it('zoomAt clamps in at 8 but lets you zoom out practically forever', () => {
     const vp = { x: 0, y: 0, zoom: 1 };
     expect(zoomAt(vp, 0, 0, 1000).zoom).toBe(8);
-    expect(zoomAt(vp, 0, 0, 0.0001).zoom).toBe(0.1);
+    expect(zoomAt(vp, 0, 0, 0.0001).zoom).toBeCloseTo(0.0001, 12);
+    let z = vp;
+    for (let i = 0; i < 40; i++) z = zoomAt(z, 0, 0, 0.5);
+    expect(z.zoom).toBeGreaterThan(0);
+    expect(Number.isFinite(z.zoom)).toBe(true);
   });
 
   it('panBy moves the view by screen delta', () => {

@@ -125,3 +125,30 @@ describe('low-contrast outline', () => {
     expect(t.calls[0].style).toBe('#000000')
   })
 })
+
+describe('felt soft edge', () => {
+  function blurCtx(a: number) {
+    const ctx: any = {
+      strokeStyle: '', lineWidth: 1, globalAlpha: 1, lineCap: '', lineJoin: '', shadowColor: '', shadowBlur: 0,
+      save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {},
+      stroke() { ctx.seen = ctx.shadowBlur },
+      getTransform: () => ({ a }),
+    }
+    return ctx
+  }
+  const line: Pt[] = [[0, 0, 0.5], [10, 0, 0.5]]
+  it('matches the on-screen line width at any zoom', () => {
+    const near = blurCtx(1)
+    drawPenStroke(near, 'felt', '#1a2f6b', 6, line)
+    expect(near.seen).toBeCloseTo(0.9, 5)
+    // a line drawn at zoom 0.001 is 6000 world units wide but only 6 px on screen
+    const far = blurCtx(0.001)
+    drawPenStroke(far, 'felt', '#1a2f6b', 6000, line)
+    expect(far.seen).toBeCloseTo(0.9, 5)
+  })
+  it('never exceeds 12 device px', () => {
+    const ctx = blurCtx(100)
+    drawPenStroke(ctx, 'felt', '#1a2f6b', 40, line)
+    expect(ctx.seen).toBe(12)
+  })
+})

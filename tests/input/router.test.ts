@@ -89,11 +89,18 @@ describe('InputRouter', () => {
     expect(r.handle(ev('pointermove', 1, 'touch', 30, 10))).toEqual([]);
   });
 
-  it('a pen not heard from for 3 s no longer blocks panning (missed pointerleave)', () => {
+  it('a pen not heard from for 1 s no longer blocks panning (missed pointerleave)', () => {
     const r = mk(false);
     r.handle({ ...ev('pointermove', 2, 'pen', 300, 300, 0, 0), t: 1000 });
-    r.handle({ ...ev('pointerdown', 1, 'touch', 10, 10), t: 4500 });
-    expect(r.handle({ ...ev('pointermove', 1, 'touch', 20, 10), t: 4510 })).toEqual([{ kind: 'pan', dx: 10, dy: 0 }]);
+    r.handle({ ...ev('pointerdown', 1, 'touch', 10, 10), t: 2100 });
+    expect(r.handle({ ...ev('pointermove', 1, 'touch', 20, 10), t: 2110 })).toEqual([{ kind: 'pan', dx: 10, dy: 0 }]);
+  });
+
+  it('a pen heard from within the last second still blocks panning', () => {
+    const r = mk(false);
+    r.handle({ ...ev('pointermove', 2, 'pen', 300, 300, 0, 0), t: 1000 });
+    r.handle({ ...ev('pointerdown', 1, 'touch', 10, 10), t: 1800 });
+    expect(r.handle({ ...ev('pointermove', 1, 'touch', 20, 10), t: 1810 })).toEqual([]);
   });
 
   it('fingerDraw: one touch draws; second finger landing emits strokeCancel then pan/zoom', () => {

@@ -59,8 +59,10 @@ function applyLineLook(
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
   if (pen === 'felt' && !fast) {
+    // shadowBlur is in device px and ignores the transform, so scale it to match the line on screen
+    const scale = typeof ctx.getTransform === 'function' ? Math.abs(ctx.getTransform().a) || 1 : 1
     ctx.shadowColor = color
-    ctx.shadowBlur = size * 0.15
+    ctx.shadowBlur = Math.min(size * 0.15 * scale, 12)
   }
 }
 

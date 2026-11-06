@@ -13,7 +13,7 @@ type Pt = { x: number; y: number };
 type Mode = 'idle' | 'pan1' | 'touchDraw' | 'gesture' | 'dead';
 
 /** A pen we have not heard from for this long counts as gone even without a pointerleave. */
-const PEN_GONE_MS = 3000;
+const PEN_GONE_MS = 1000;
 
 /**
  * Turns raw pointer samples (screen px) into drawing / navigation actions.
