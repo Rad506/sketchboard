@@ -20,8 +20,9 @@ export class LiveLayer {
   private vp: Viewport = { x: 0, y: 0, zoom: 1 }
 
   constructor(private canvas: HTMLCanvasElement) {
-    this.ctx =
-      canvas.getContext('2d', { desynchronized: true }) ?? canvas.getContext('2d')
+    // Not `desynchronized`: on Android Chrome that overlay loses alpha blending and
+    // its transparent pixels render black over the whole board.
+    this.ctx = canvas.getContext('2d')
   }
 
   /** `alpha` is optional so callers can draw translucent previews (area eraser). */

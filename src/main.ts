@@ -238,7 +238,7 @@ function dispatch(e: PointerEvent, ev: PointerEvent): void {
 
 /** Live-layer clear scheduled after the next committed draw is dropped if a newer stroke has started since. */
 let liveEpoch = 0
-/** On lift the committed stroke only appears at the next frame, so clear the (desynchronized) live layer after that draw to avoid a blink. */
+/** On lift the committed stroke only appears at the next frame, so clear the live layer after that draw to avoid a blink. */
 function clearLiveAfterDraw(): void {
   const epoch = liveEpoch
   renderer.requestDraw(() => {

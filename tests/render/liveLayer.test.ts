@@ -11,15 +11,17 @@ function fakeCtx() {
 }
 
 describe('LiveLayer', () => {
-  it('requests desynchronized first, falls back when null', () => {
+  // On Android Chrome a desynchronized overlay canvas loses alpha blending and its
+  // transparent pixels render black, covering the whole board. Never request it.
+  it('requests a plain transparent 2d context (never desynchronized)', () => {
     const canvas = document.createElement('canvas')
     const ctx = fakeCtx()
-    const spy = vi.fn((_t: string, opts?: unknown) => (opts ? null : ctx))
+    const spy = vi.fn((_t: string, _opts?: unknown) => ctx)
     ;(canvas as any).getContext = spy
     new LiveLayer(canvas)
-    expect(spy).toHaveBeenCalledTimes(2)
-    expect(spy.mock.calls[0][1]).toEqual({ desynchronized: true })
-    expect(spy.mock.calls[1][1]).toBeUndefined()
+    expect(spy).toHaveBeenCalledTimes(1)
+    const opts = spy.mock.calls[0][1] as { desynchronized?: boolean } | undefined
+    expect(opts?.desynchronized).not.toBe(true)
   })
   it('previews felt strokes as a polyline in world space and clears', () => {
     const canvas = document.createElement('canvas')
