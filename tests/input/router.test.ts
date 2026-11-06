@@ -46,11 +46,54 @@ describe('InputRouter', () => {
     expect((b.find((x) => x.kind === 'zoom') as { factor: number }).factor).toBeCloseTo(100 / 90, 9);
   });
 
-  it('one touch does nothing when fingerDraw is false', () => {
+  it('one finger pans when no pen is near (fingerDraw off)', () => {
     const r = mk(false);
     expect(r.handle(ev('pointerdown', 1, 'touch', 10, 10))).toEqual([]);
-    expect(r.handle(ev('pointermove', 1, 'touch', 30, 30))).toEqual([]);
-    expect(r.handle(ev('pointerup', 1, 'touch', 30, 30, 0, 0))).toEqual([]);
+    expect(r.handle(ev('pointermove', 1, 'touch', 30, 25))).toEqual([{ kind: 'pan', dx: 20, dy: 15 }]);
+    expect(r.handle(ev('pointermove', 1, 'touch', 35, 25))).toEqual([{ kind: 'pan', dx: 5, dy: 0 }]);
+    expect(r.handle(ev('pointerup', 1, 'touch', 35, 25, 0, 0))).toEqual([]);
+  });
+
+  it('while the pen hovers, a finger cannot pan or zoom', () => {
+    const r = mk(false);
+    r.handle(ev('pointermove', 2, 'pen', 300, 300, 0, 0)); // pen hovering
+    r.handle(ev('pointerdown', 1, 'touch', 10, 10));
+    expect(r.handle(ev('pointermove', 1, 'touch', 40, 40))).toEqual([]);
+    r.handle(ev('pointerdown', 3, 'touch', 100, 10));
+    expect(r.handle(ev('pointermove', 3, 'touch', 140, 10))).toEqual([]);
+  });
+
+  it('after the pen leaves (picked up), one finger pans again', () => {
+    const r = mk(false);
+    r.handle(ev('pointermove', 2, 'pen', 300, 300, 0, 0));
+    r.handle(ev('pointerleave', 2, 'pen', 300, 300, 0, 0));
+    r.handle(ev('pointerdown', 1, 'touch', 10, 10));
+    expect(r.handle(ev('pointermove', 1, 'touch', 20, 10))).toEqual([{ kind: 'pan', dx: 10, dy: 0 }]);
+  });
+
+  it('the hover pointer taking over after a stroke keeps the pen counted as near', () => {
+    const r = mk(false);
+    r.handle(ev('pointerdown', 9, 'pen', 10, 10, 0.4));
+    r.handle(ev('pointerup', 9, 'pen', 10, 10, 0, 0));
+    r.handle(ev('pointerleave', 9, 'pen', 10, 10, 0, 0)); // contact pointer leaves…
+    r.handle(ev('pointermove', 2, 'pen', 12, 12, 0, 0)); // …hover pointer continues
+    r.handle(ev('pointerdown', 1, 'touch', 10, 10));
+    expect(r.handle(ev('pointermove', 1, 'touch', 40, 40))).toEqual([]);
+  });
+
+  it('a pen arriving mid-pan stops the pan until the finger lifts', () => {
+    const r = mk(false);
+    r.handle(ev('pointerdown', 1, 'touch', 10, 10));
+    r.handle(ev('pointermove', 1, 'touch', 20, 10));
+    r.handle(ev('pointermove', 2, 'pen', 300, 300, 0, 0));
+    expect(r.handle(ev('pointermove', 1, 'touch', 30, 10))).toEqual([]);
+  });
+
+  it('a pen not heard from for 3 s no longer blocks panning (missed pointerleave)', () => {
+    const r = mk(false);
+    r.handle({ ...ev('pointermove', 2, 'pen', 300, 300, 0, 0), t: 1000 });
+    r.handle({ ...ev('pointerdown', 1, 'touch', 10, 10), t: 4500 });
+    expect(r.handle({ ...ev('pointermove', 1, 'touch', 20, 10), t: 4510 })).toEqual([{ kind: 'pan', dx: 10, dy: 0 }]);
   });
 
   it('fingerDraw: one touch draws; second finger landing emits strokeCancel then pan/zoom', () => {

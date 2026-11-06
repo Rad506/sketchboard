@@ -10,12 +10,16 @@ export type RouterAction =
   | { kind: 'zoom'; cx: number; cy: number; factor: number };
 
 type Pt = { x: number; y: number };
-type Mode = 'idle' | 'pending' | 'touchDraw' | 'gesture' | 'dead';
+type Mode = 'idle' | 'pan1' | 'touchDraw' | 'gesture' | 'dead';
+
+/** A pen we have not heard from for this long counts as gone even without a pointerleave. */
+const PEN_GONE_MS = 3000;
 
 /**
  * Turns raw pointer samples (screen px) into drawing / navigation actions.
- * Pen (and mouse, for desktop testing) draw; touch pans/zooms with two fingers,
- * or draws with one finger when fingerDraw is on. Conversion to world coords is the caller's job.
+ * Pen (and mouse, for desktop testing) draw. Touch pans with one finger (or draws, when
+ * fingerDraw is on) and pans/zooms with two — but only while no pen is near the screen,
+ * so a resting palm cannot move the board while writing. Conversion to world coords is the caller's job.
  */
 export class InputRouter {
   private penId: number | null = null;
@@ -24,13 +28,28 @@ export class InputRouter {
   private touchDrawId: number | null = null;
   /** Last pen sample of the active stroke, so it can be ended where it was if the pen never reports up. */
   private lastPen: { x: number; y: number; p: number; t: number } | null = null;
+  /** Pen pointers currently hovering or touching, and when the pen was last heard from. */
+  private penPointers = new Set<number>();
+  private penSeenT = -Infinity;
 
   constructor(private opts: { fingerDraw: () => boolean }) {}
 
   handle(e: RouterEvent): RouterAction[] {
+    if (e.pointerType === 'pen') this.trackPen(e);
     if (e.pointerType === 'touch') return this.touch(e);
     if (e.pointerType === 'pen' || e.pointerType === 'mouse') return this.pen(e);
     return [];
+  }
+
+  private trackPen(e: RouterEvent): void {
+    if (e.type === 'pointerleave' || e.type === 'pointercancel') this.penPointers.delete(e.pointerId);
+    else this.penPointers.add(e.pointerId);
+    this.penSeenT = e.t;
+  }
+
+  /** True while the pen hovers or touches (and has been heard from recently). */
+  private penNear(t: number): boolean {
+    return this.penPointers.size > 0 && t - this.penSeenT < PEN_GONE_MS;
   }
 
   private pressureOf(e: RouterEvent): number {
@@ -53,6 +72,7 @@ export class InputRouter {
     this.penId = null;
     this.lastPen = null;
     this.touches.clear();
+    this.penPointers.clear();
     this.touchDrawId = null;
     this.mode = 'idle';
     return out;
@@ -76,7 +96,6 @@ export class InputRouter {
     if (mine) {
       if (e.type === 'pointermove' && this.contact(e)) {
         out.push(this.act('strokeMove', e));
-        this.lastPen = { x: e.x, y: e.y, p: this.pressureOf(e), t: e.t };
         this.lastPen = { x: e.x, y: e.y, p: this.pressureOf(e), t: e.t };
       }
       return out;
@@ -113,6 +132,15 @@ export class InputRouter {
       return out;
     }
 
+    // pen hovering or touching nearby: fingers are inert (palm protection) until they all lift
+    if ((e.type === 'pointerdown' || e.type === 'pointermove') && this.penNear(e.t)) {
+      if (e.type === 'pointerdown' || this.touches.has(id)) this.touches.set(id, { x: e.x, y: e.y });
+      if (this.mode === 'touchDraw') out.push({ kind: 'strokeCancel' });
+      this.touchDrawId = null;
+      if (this.touches.size) this.mode = 'dead';
+      return out;
+    }
+
     if (e.type === 'pointerdown') {
       this.touches.set(id, { x: e.x, y: e.y });
       if (this.touches.size === 1) {
@@ -121,9 +149,9 @@ export class InputRouter {
           this.touchDrawId = id;
           out.push({ kind: 'strokeStart', x: e.x, y: e.y, p: 0.5, t: e.t });
         } else {
-          this.mode = 'pending';
+          this.mode = 'pan1';
         }
-      } else if (this.touches.size === 2 && (this.mode === 'pending' || this.mode === 'touchDraw')) {
+      } else if (this.touches.size === 2 && (this.mode === 'pan1' || this.mode === 'touchDraw')) {
         if (this.mode === 'touchDraw') out.push({ kind: 'strokeCancel' });
         this.touchDrawId = null;
         this.mode = 'gesture';
@@ -139,6 +167,11 @@ export class InputRouter {
       if (this.mode === 'touchDraw' && id === this.touchDrawId) {
         this.touches.set(id, { x: e.x, y: e.y });
         out.push({ kind: 'strokeMove', x: e.x, y: e.y, p: 0.5, t: e.t });
+      } else if (this.mode === 'pan1' && this.touches.size === 1) {
+        this.touches.set(id, { x: e.x, y: e.y });
+        const dx = e.x - prev.x;
+        const dy = e.y - prev.y;
+        if (dx !== 0 || dy !== 0) out.push({ kind: 'pan', dx, dy });
       } else if (this.mode === 'gesture' && this.touches.size === 2) {
         const before = this.geometry();
         this.touches.set(id, { x: e.x, y: e.y });
