@@ -96,6 +96,34 @@ describe('transformFor', () => {
   });
 });
 
+describe('transformFor grab offset', () => {
+  const start = box(0, 0, 100, 50);
+  it('corner grabbed off-corner with no movement is identity', () => {
+    const t = transformFor('se', start, [105, 55], [105, 55]);
+    expect(t.sx).toBe(1);
+    expect(t.sy).toBe(1);
+  });
+  it('side grabbed off-edge with no movement is identity', () => {
+    expect(transformFor('e', start, [110, 25], [110, 25]).sx).toBe(1);
+    expect(transformFor('s', start, [50, 60], [50, 60]).sy).toBe(1);
+  });
+  it('off-corner drag scales by the movement only', () => {
+    expect(transformFor('se', start, [105, 55], [205, 105]).sx).toBeCloseTo(2, 5);
+  });
+});
+
+describe('hitHandle tiny boxes', () => {
+  const tiny = box(0, 0, 40, 40);
+  it('centre and inside move the selection', () => {
+    expect(hitHandle(tiny, 20, 20)).toBe('move');
+    expect(hitHandle(tiny, 3, 3)).toBe('move');
+  });
+  it('corners still hit from outside the box', () => {
+    expect(hitHandle(tiny, -10, -10)).toBe('nw');
+    expect(hitHandle(tiny, 50, 50)).toBe('se');
+  });
+});
+
 describe('transformObject', () => {
   const stretch: Transform = { ax: 0, ay: 0, sx: 2, sy: 3, dx: 0, dy: 0, uniform: false };
   const uni: Transform = { ax: 0, ay: 0, sx: 2, sy: 2, dx: 10, dy: 0, uniform: true };

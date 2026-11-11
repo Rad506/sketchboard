@@ -9,6 +9,8 @@ export type Pt2 = [number, number];
 const INSIDE_FRACTION = 0.6;
 /** Loops smaller than this (screen px) in both directions select nothing. */
 const MIN_LOOP_PX = 20;
+/** Loop points closer than this (screen px) to the previous kept point are dropped. */
+const THIN_PX = 2;
 
 /** Even-odd point-in-polygon; the polygon is implicitly closed. */
 export function pointInPolygon(x: number, y: number, poly: Pt2[]): boolean {
@@ -27,9 +29,33 @@ function qualifies(o: BoardObject, loop: Pt2[]): boolean {
   }
   const pts: ArrayLike<number>[] = o.kind === 'stroke' ? o.points : outlineOf(o).flat();
   if (pts.length === 0) return false;
+  const n = pts.length;
+  // smallest inside-count that meets the fraction (stop counting once decided either way)
+  let need = Math.ceil(n * INSIDE_FRACTION);
+  while (need > 0 && (need - 1) / n >= INSIDE_FRACTION) need--;
+  while (need / n < INSIDE_FRACTION) need++;
   let inside = 0;
-  for (const p of pts) if (pointInPolygon(p[0], p[1], loop)) inside++;
-  return inside / pts.length >= INSIDE_FRACTION;
+  for (let i = 0; i < n; i++) {
+    if (pointInPolygon(pts[i][0], pts[i][1], loop)) {
+      if (++inside >= need) return true;
+    } else if (i + 1 - inside > n - need) return false;
+  }
+  return inside >= need;
+}
+
+/** Drop points closer than minDist to the previously kept one; the last point is always kept. */
+function thin(loop: Pt2[], minDist: number): Pt2[] {
+  const out: Pt2[] = [loop[0]];
+  const m2 = minDist * minDist;
+  for (let i = 1; i < loop.length; i++) {
+    const [px, py] = out[out.length - 1];
+    const dx = loop[i][0] - px;
+    const dy = loop[i][1] - py;
+    if (dx * dx + dy * dy >= m2) out.push(loop[i]);
+  }
+  const last = loop[loop.length - 1];
+  if (out[out.length - 1] !== last) out.push(last);
+  return out;
 }
 
 /** Ids of objects selected by a lasso loop (world units), in doc.query order. */
@@ -43,9 +69,10 @@ export function selectInLasso(doc: BoardDoc, loop: Pt2[], zoom: number): string[
     if (y > maxY) maxY = y;
   }
   if ((maxX - minX) * zoom < MIN_LOOP_PX && (maxY - minY) * zoom < MIN_LOOP_PX) return [];
+  const thinned = thin(loop, THIN_PX / zoom);
   return doc
     .query({ minX, minY, maxX, maxY })
-    .filter((o) => qualifies(o, loop))
+    .filter((o) => qualifies(o, thinned))
     .map((o) => o.id);
 }
 
@@ -104,12 +131,17 @@ export function hitHandle(box: BBox, x: number, y: number): Handle | null {
   const half = HANDLE_HIT / 2;
   const hit = (h: Exclude<Handle, 'inside'>) =>
     Math.abs(x - pts[h][0]) <= half && Math.abs(y - pts[h][1]) <= half;
+  const inBox = x >= box.minX && x <= box.maxX && y >= box.minY && y <= box.maxY;
+  // a tiny box is all handle: inside it, moving wins so the selection stays movable
+  if (inBox && (box.maxX - box.minX < 2 * HANDLE_HIT || box.maxY - box.minY < 2 * HANDLE_HIT)) {
+    return hit('move') ? 'move' : 'inside';
+  }
   for (const h of CORNERS) if (hit(h)) return h;
   if (box.maxX - box.minX >= SIDES_MIN && box.maxY - box.minY >= SIDES_MIN) {
     for (const h of SIDES) if (hit(h)) return h;
   }
   if (hit('move')) return 'move';
-  if (x >= box.minX && x <= box.maxX && y >= box.minY && y <= box.maxY) return 'inside';
+  if (inBox) return 'inside';
   return null;
 }
 
@@ -130,20 +162,23 @@ export function transformFor(h: Handle, start: BBox, from: Pt2, to: Pt2): Transf
   const cy = north ? start.minY : start.maxY;
   const ax = west ? start.maxX : start.minX;
   const ay = north ? start.maxY : start.minY;
+  // the dragged point moves by the pointer's delta, so grabbing off the exact corner/edge doesn't jump
+  const px = cx + (to[0] - from[0]);
+  const py = cy + (to[1] - from[1]);
   if (isCorner) {
     const vx = cx - ax;
     const vy = cy - ay;
     const len2 = vx * vx + vy * vy;
-    const s = len2 === 0 ? 1 : clampScale(((to[0] - ax) * vx + (to[1] - ay) * vy) / len2);
+    const s = len2 === 0 ? 1 : clampScale(((px - ax) * vx + (py - ay) * vy) / len2);
     return { ax, ay, sx: s, sy: s, dx: 0, dy: 0, uniform: true };
   }
   const horizontal = h === 'e' || h === 'w';
   if (horizontal) {
     const d = cx - ax;
-    return { ax, ay: 0, sx: d === 0 ? 1 : clampScale((to[0] - ax) / d), sy: 1, dx: 0, dy: 0, uniform: false };
+    return { ax, ay: 0, sx: d === 0 ? 1 : clampScale((px - ax) / d), sy: 1, dx: 0, dy: 0, uniform: false };
   }
   const d = cy - ay;
-  return { ax: 0, ay, sx: 1, sy: d === 0 ? 1 : clampScale((to[1] - ay) / d), dx: 0, dy: 0, uniform: false };
+  return { ax: 0, ay, sx: 1, sy: d === 0 ? 1 : clampScale((py - ay) / d), dx: 0, dy: 0, uniform: false };
 }
 
 /** Apply p' = a + (p - a) * (sx, sy) + (dx, dy). Pure; recomputes bbox. */

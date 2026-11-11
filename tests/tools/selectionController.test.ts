@@ -173,4 +173,34 @@ describe('SelectionController', () => {
     c.clear();
     expect(c.hits(box.minX, box.minY, vp)).toBe(false);
   });
+
+  it('a tap on a corner handle commits nothing', () => {
+    const { c, onCommit } = setup();
+    lassoAround(c);
+    const sb = screenBox(c.bounds()!, vp);
+    // 6 px diagonally outside the padded corner: on the handle's hit area, not on the corner
+    const [x, y] = [sb.maxX + 6, sb.maxY + 6];
+    expect(c.down(x, y, x, y, vp)).toBe('drag');
+    c.up(vp);
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it('a drag under 6 screen px commits nothing', () => {
+    const { c, onCommit } = setup();
+    lassoAround(c);
+    expect(c.down(150, 160, 150, 160, vp)).toBe('drag');
+    c.move(153, 162);
+    c.up(vp);
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it('slop is measured in screen px (zoomed in)', () => {
+    const { c, onCommit } = setup();
+    lassoAround(c);
+    const z = { x: 0, y: 0, zoom: 4 };
+    expect(c.down(150, 160, 600, 640, z)).toBe('drag');
+    c.move(152, 160); // 2 world px = 8 screen px
+    c.up(z);
+    expect(onCommit).toHaveBeenCalledTimes(1);
+  });
 });

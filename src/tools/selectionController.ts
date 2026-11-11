@@ -13,6 +13,9 @@ import {
   type Pt2,
 } from './lasso';
 
+/** A drag that moved less than this (screen px) in total counts as a tap. */
+const TAP_SLOP_PX = 6;
+
 type State = 'idle' | 'lassoing' | 'selected' | 'dragging';
 
 interface Drag {
@@ -108,8 +111,9 @@ export class SelectionController {
       const d = this.drag;
       const t = transformFor(d.handle, d.startBounds, d.from, d.last);
       const identity = t.sx === 1 && t.sy === 1 && t.dx === 0 && t.dy === 0;
+      const slop = Math.hypot(d.last[0] - d.from[0], d.last[1] - d.from[1]) * vp.zoom < TAP_SLOP_PX;
       this.endDrag();
-      if (!identity) {
+      if (!identity && !slop) {
         this.onCommit({ remove: d.originals, add: d.originals.map((o) => transformObject(o, t)) });
       }
     }

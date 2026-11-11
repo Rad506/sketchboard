@@ -81,6 +81,22 @@ describe('selectInLasso', () => {
   });
 });
 
+describe('selectInLasso performance', () => {
+  it('handles a 2,000-point loop and a 1,000-point stroke quickly', () => {
+    const loop: Pt2[] = Array.from({ length: 2000 }, (_, i) => {
+      const a = (i / 2000) * Math.PI * 2;
+      return [200 + 150 * Math.cos(a), 200 + 150 * Math.sin(a)] as Pt2;
+    });
+    const inside = stroke('in', Array.from({ length: 1000 }, (_, i) => [150 + (i % 100), 200, 0.5] as Pt));
+    const outside = stroke('out', Array.from({ length: 1000 }, (_, i) => [600 + (i % 100), 200, 0.5] as Pt));
+    const d = docWith(inside, outside);
+    const t0 = performance.now();
+    const ids = selectInLasso(d, loop, 1);
+    expect(performance.now() - t0).toBeLessThan(50);
+    expect(ids).toEqual(['in']);
+  });
+});
+
 describe('selectionBounds', () => {
   it('empty -> null; two objects -> union', () => {
     expect(selectionBounds([])).toBeNull();
