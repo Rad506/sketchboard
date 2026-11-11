@@ -95,8 +95,8 @@ export function handlePoints(box: BBox): Record<Exclude<Handle, 'inside'>, Pt2> 
   };
 }
 
-const CORNERS: Handle[] = ['nw', 'ne', 'se', 'sw'];
-const SIDES: Handle[] = ['n', 'e', 's', 'w'];
+const CORNERS: Exclude<Handle, 'inside'>[] = ['nw', 'ne', 'se', 'sw'];
+const SIDES: Exclude<Handle, 'inside'>[] = ['n', 'e', 's', 'w'];
 
 /** Hit-test screen point; priority corner > side > move > inside. */
 export function hitHandle(box: BBox, x: number, y: number): Handle | null {
@@ -104,9 +104,9 @@ export function hitHandle(box: BBox, x: number, y: number): Handle | null {
   const half = HANDLE_HIT / 2;
   const hit = (h: Exclude<Handle, 'inside'>) =>
     Math.abs(x - pts[h][0]) <= half && Math.abs(y - pts[h][1]) <= half;
-  for (const h of CORNERS) if (hit(h as Exclude<Handle, 'inside'>)) return h;
+  for (const h of CORNERS) if (hit(h)) return h;
   if (box.maxX - box.minX >= SIDES_MIN && box.maxY - box.minY >= SIDES_MIN) {
-    for (const h of SIDES) if (hit(h as Exclude<Handle, 'inside'>)) return h;
+    for (const h of SIDES) if (hit(h)) return h;
   }
   if (hit('move')) return 'move';
   if (x >= box.minX && x <= box.maxX && y >= box.minY && y <= box.maxY) return 'inside';

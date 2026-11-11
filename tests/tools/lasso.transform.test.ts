@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { bboxOf } from '../../src/core/geometry';
 import type { BoardObject, StrokeObj, ShapeObj, ArrowObj, TextObj } from '../../src/core/types';
 import {
+  handlePoints,
   hitHandle,
   screenBox,
   transformFor,
@@ -29,10 +30,17 @@ describe('hitHandle', () => {
     expect(hitHandle(b, 300, 300)).toBeNull();
   });
   it('corner beats side when overlapping', () => {
-    const small = box(0, 0, 100, 100); // n side at (50,0), nw corner at (0,0): 50 apart
-    expect(hitHandle(small, 20, 0)).toBe('nw');
-    const mid = box(0, 0, 90, 90); // n at (45,0); point (22,0) within 22 of both
-    expect(hitHandle(mid, 22, 0)).toBe('nw');
+    const b88 = box(0, 0, 88, 88); // nw (0,0) and n (44,0) both within 22 of (22,0)
+    expect(hitHandle(b88, 22, 0)).toBe('nw');
+  });
+  it('side beats move when overlapping', () => {
+    const b88 = box(0, 0, 88, 88); // n (44,0) and move (44,44) both within 22 of (44,22)
+    expect(hitHandle(b88, 44, 22)).toBe('n');
+  });
+  it.each(['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w', 'move'] as const)('hits %s at its centre', (h) => {
+    const b = box(0, 0, 200, 200);
+    const [x, y] = handlePoints(b)[h];
+    expect(hitHandle(b, x, y)).toBe(h);
   });
   it('hides sides when narrow', () => {
     const r = hitHandle(box(0, 0, 80, 200), 0, 100);
@@ -70,9 +78,21 @@ describe('transformFor', () => {
   it('w past the anchor', () => {
     expect(transformFor('w', start, [0, 25], [500, 25]).sx).toBe(0.05);
   });
-  it('s and n sides scale y only', () => {
-    expect(transformFor('s', start, [50, 50], [50, 100])).toMatchObject({ sx: 1, sy: 2, ay: 0 });
-    expect(transformFor('n', start, [50, 0], [50, -50])).toMatchObject({ sx: 1, sy: 2, ay: 50 });
+  it.each([
+    ['nw', [0, 0], [-100, -50], { ax: 100, ay: 50, sx: 2, sy: 2 }],
+    ['ne', [100, 0], [200, -50], { ax: 0, ay: 50, sx: 2, sy: 2 }],
+    ['sw', [0, 50], [-100, 100], { ax: 100, ay: 0, sx: 2, sy: 2 }],
+    ['se', [100, 50], [200, 100], { ax: 0, ay: 0, sx: 2, sy: 2 }],
+  ] as const)('corner %s anchors opposite and scales uniformly', (h, from, to, want) => {
+    expect(transformFor(h, start, [...from], [...to])).toMatchObject({ ...want, uniform: true });
+  });
+  it.each([
+    ['w', [0, 25], [-100, 25], { ax: 100, sx: 2, sy: 1 }],
+    ['e', [100, 25], [150, 25], { ax: 0, sx: 1.5, sy: 1 }],
+    ['n', [50, 0], [50, -50], { ay: 50, sx: 1, sy: 2 }],
+    ['s', [50, 50], [50, 100], { ay: 0, sx: 1, sy: 2 }],
+  ] as const)('side %s stretches one axis', (h, from, to, want) => {
+    expect(transformFor(h, start, [...from], [...to])).toMatchObject({ ...want, uniform: false });
   });
 });
 
