@@ -7,6 +7,7 @@ function fakeCtx() {
     fill: vi.fn(), closePath: vi.fn(), quadraticCurveTo: vi.fn(), save: vi.fn(), restore: vi.fn(),
     setTransform: vi.fn(), lineWidth: 0, strokeStyle: '', fillStyle: '', globalAlpha: 1, lineCap: '',
     lineJoin: '', shadowColor: '', shadowBlur: 0,
+    fillRect: vi.fn(), strokeRect: vi.fn(), arc: vi.fn(), setLineDash: vi.fn(),
   }
 }
 
@@ -48,5 +49,33 @@ describe('LiveLayer', () => {
     l.add(1, 2, 0.5)
     l.add(30, 40, 0.8)
     expect(ctx.fill).toHaveBeenCalled()
+  })
+  describe('drawSelection', () => {
+    const setup = () => {
+      const canvas = document.createElement('canvas')
+      const ctx = fakeCtx()
+      ;(canvas as any).getContext = () => ctx
+      return { l: new LiveLayer(canvas), ctx }
+    }
+    it('draws 8 handle rects and 1 arc for a large box', () => {
+      const { l, ctx } = setup()
+      l.drawSelection({ loop: null, preview: [], box: { minX: 10, minY: 10, maxX: 210, maxY: 210 } })
+      expect(ctx.fillRect).toHaveBeenCalledTimes(8)
+      expect(ctx.arc).toHaveBeenCalledTimes(1)
+    })
+    it('hides side handles for a narrow box', () => {
+      const { l, ctx } = setup()
+      l.drawSelection({ loop: null, preview: [], box: { minX: 10, minY: 10, maxX: 70, maxY: 210 } })
+      expect(ctx.fillRect).toHaveBeenCalledTimes(4)
+      expect(ctx.arc).toHaveBeenCalledTimes(1)
+    })
+    it('draws the loop dashed', () => {
+      const { l, ctx } = setup()
+      l.drawSelection({ loop: [[0, 0], [50, 0], [50, 50]], preview: [], box: null })
+      const dashes = ctx.setLineDash.mock.calls.filter((c) => (c[0] as number[]).length > 0)
+      expect(dashes.length).toBeGreaterThan(0)
+      expect(ctx.stroke).toHaveBeenCalled()
+      expect(ctx.fillRect).not.toHaveBeenCalled()
+    })
   })
 })

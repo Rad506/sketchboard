@@ -11,6 +11,7 @@ export class Renderer {
   private moving = false
   private settle: ReturnType<typeof setTimeout> | null = null
   private afterDraw: (() => void)[] = []
+  private hidden: Set<string> = new Set()
 
   constructor(private canvas: HTMLCanvasElement, private doc: BoardDoc) {
     this.ctx = canvas.getContext('2d')
@@ -35,6 +36,12 @@ export class Renderer {
       this.moving = false
       this.requestDraw()
     }, 150)
+    this.requestDraw()
+  }
+
+  /** Ids not to draw (objects being moved/resized are shown on the live layer instead). */
+  setHidden(ids: Set<string>): void {
+    this.hidden = new Set(ids)
     this.requestDraw()
   }
 
@@ -63,6 +70,6 @@ export class Renderer {
     const w = this.canvas.width / dpr / zoom
     const h = this.canvas.height / dpr / zoom
     const visible = this.doc.query({ minX: x, minY: y, maxX: x + w, maxY: y + h })
-    for (const o of renderOrder(visible)) drawObject(c, o, { fast: this.moving })
+    for (const o of renderOrder(visible.filter((o) => !this.hidden.has(o.id)))) drawObject(c, o, { fast: this.moving })
   }
 }
