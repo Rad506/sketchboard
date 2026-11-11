@@ -76,6 +76,7 @@ const live = new LiveLayer(liveCanvas)
 let doc = new BoardDoc()
 let history = new History(doc)
 let sel = new SelectionController(doc, (c) => history.apply(c))
+let toolState: ToolState = { tool: 'ink', lastPen: 'ink' }
 const renderer = new Renderer(mainCanvas, doc)
 let vp: Viewport = { x: 0, y: 0, zoom: 1 }
 
@@ -100,8 +101,10 @@ function redrawSelection(): void {
 
 /** Drop any selection and its overlay (tool change, undo/redo, board switch, app hidden). */
 function clearSelection(): void {
+  const had = sel.active || sel.busy || sel.loop !== null
+  sel.cancel()
   sel.clear()
-  redrawSelection()
+  if (had) redrawSelection()
 }
 
 function resize(): void {
@@ -116,12 +119,12 @@ function resize(): void {
   }
   live.setDpr(dpr)
   renderer.requestDraw()
+  if (toolState.tool === 'lasso' && (sel.active || sel.busy)) redrawSelection()
 }
 window.addEventListener('resize', resize)
 window.addEventListener('orientationchange', resize)
 resize()
 
-let toolState: ToolState = { tool: 'ink', lastPen: 'ink' }
 renderToolBadge(badge, toolState.tool)
 
 function setTool(next: ToolState): void {
@@ -294,8 +297,16 @@ function applyActions(actions: RouterAction[]): void {
         continue
       }
       if (a.kind === 'strokeEnd') {
+        const committing = sel.preview.length > 0
         sel.up(vp)
-        redrawSelection()
+        if (committing) {
+          // history.apply only schedules the main redraw: keep the live preview up until that frame has painted
+          renderer.setHidden(sel.hidden)
+          const epoch = liveEpoch
+          renderer.requestDraw(() => {
+            if (epoch === liveEpoch) redrawSelection()
+          })
+        } else redrawSelection()
         continue
       }
       if (a.kind === 'strokeCancel') {
