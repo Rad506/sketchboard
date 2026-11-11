@@ -12,6 +12,7 @@ export const ICONS: Record<string, string> = {
   rect: svg('<rect x="4.5" y="4.5" width="15" height="15" rx="1.5"/>'),
   arrow: svg('<path d="M5 19L19 5"/><path d="M9 5h10v10"/>'),
   text: svg('<path d="M5 6V4h14v2"/><path d="M12 4v16"/><path d="M9 20h6"/>'),
+  lasso: svg('<path d="M5 12c0-4 3-7 7-7s7 2.5 7 6-3 5-6 5c-2 0-3 1-3 2.5" stroke-dasharray="3 2.6"/><circle cx="10" cy="19.5" r="1.6"/>'),
   undo: svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/>'),
   redo: svg('<path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/>'),
   caret: svg('<path d="M7 10l5 5 5-5"/>'),

@@ -29,4 +29,12 @@ describe('toolState', () => {
     applySideGesture(s, 'single');
     expect(s).toEqual({ tool: 'ink', lastPen: 'ink' });
   });
+  it('lasso keeps lastPen; side gesture goes to strokeEraser and back', () => {
+    const s: ToolState = { tool: 'felt', lastPen: 'felt' };
+    const l = selectTool(s, 'lasso');
+    expect(l).toEqual({ tool: 'lasso', lastPen: 'felt' });
+    const e = applySideGesture(l, 'single');
+    expect(e.tool).toBe('strokeEraser');
+    expect(applySideGesture(e, 'single').tool).toBe('felt');
+  });
 });

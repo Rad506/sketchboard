@@ -87,6 +87,8 @@ export function mountToolbar(
   ar.addEventListener('click', () => pick('arrow', ar))
   const tx = button('text', 'Text', ICONS.text, g3)
   tx.addEventListener('click', () => pick('text', tx))
+  const ls = button('lasso', 'Lasso', ICONS.lasso, g3)
+  ls.addEventListener('click', () => pick('lasso', ls))
 
   const menu = document.createElement('div')
   menu.className = 'tb-menu'

@@ -7,7 +7,8 @@ export type Tool =
   | 'triangle'
   | 'rect'
   | 'arrow'
-  | 'text';
+  | 'text'
+  | 'lasso';
 
 export interface ToolState {
   tool: Tool;

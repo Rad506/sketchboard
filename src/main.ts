@@ -38,6 +38,8 @@ import { exportRect, renderPng, shareFileName, shareOrDownload } from './export/
 import { chooseShareMode } from './ui/shareSheet'
 import { showToast } from './ui/toast'
 import { seedStressStrokes } from './core/stress'
+import { SelectionController } from './tools/selectionController'
+import { screenBox } from './tools/lasso'
 import { SnapController, recognizedToObject, commitStroke } from './tools/snapController'
 
 const TAP_SLOP_PX = 6
@@ -73,6 +75,7 @@ const liveCanvas = document.getElementById('live-canvas') as HTMLCanvasElement
 const live = new LiveLayer(liveCanvas)
 let doc = new BoardDoc()
 let history = new History(doc)
+let sel = new SelectionController(doc, (c) => history.apply(c))
 const renderer = new Renderer(mainCanvas, doc)
 let vp: Viewport = { x: 0, y: 0, zoom: 1 }
 
@@ -81,6 +84,24 @@ function setView(next: Viewport, persist = true): void {
   live.setViewport(vp)
   renderer.setViewport(vp)
   if (persist) scheduleViewportSave()
+  if (toolState.tool === 'lasso' && (sel.active || sel.busy)) redrawSelection()
+}
+
+/** Sync the lasso overlay (loop, dragged preview, box + handles) and which objects the main canvas hides. */
+function redrawSelection(): void {
+  renderer.setHidden(sel.hidden)
+  const b = sel.bounds()
+  if (sel.loop === null && !sel.active && !sel.busy) {
+    live.clear()
+    return
+  }
+  live.drawSelection({ loop: sel.loop, preview: sel.preview, box: b ? screenBox(b, vp) : null })
+}
+
+/** Drop any selection and its overlay (tool change, undo/redo, board switch, app hidden). */
+function clearSelection(): void {
+  sel.clear()
+  redrawSelection()
 }
 
 function resize(): void {
@@ -104,6 +125,7 @@ let toolState: ToolState = { tool: 'ink', lastPen: 'ink' }
 renderToolBadge(badge, toolState.tool)
 
 function setTool(next: ToolState): void {
+  if (next.tool !== toolState.tool) clearSelection()
   toolState = next
   renderToolBadge(badge, toolState.tool)
   const pk = popover.kind()
@@ -112,7 +134,10 @@ function setTool(next: ToolState): void {
 }
 
 const detector = new SideButtonDetector((g) => setTool(applySideGesture(toolState, g)))
-const router = new InputRouter({ fingerDraw: () => settings.fingerDraw })
+const router = new InputRouter({
+  fingerDraw: () => settings.fingerDraw,
+  claimTouch: (x, y) => toolState.tool === 'lasso' && sel.hits(x, y, vp),
+})
 
 board.addEventListener('contextmenu', (e) => e.preventDefault())
 
@@ -250,6 +275,36 @@ function applyActions(actions: RouterAction[]): void {
   let sessionChanged = false
   for (const a of actions) {
     if (a.kind === 'strokeStart' || a.kind === 'strokeEnd' || a.kind === 'strokeCancel') sessionChanged = true
+    if (toolState.tool === 'lasso') {
+      if (a.kind === 'strokeStart') {
+        if (editing) {
+          ;(document.activeElement as HTMLElement | null)?.blur()
+        } else {
+          liveEpoch++
+          const [wx, wy] = toWorld(vp, a.x, a.y)
+          sel.down(wx, wy, a.x, a.y, vp)
+          redrawSelection()
+        }
+        continue
+      }
+      if (a.kind === 'strokeMove') {
+        const [wx, wy] = toWorld(vp, a.x, a.y)
+        sel.move(wx, wy)
+        redrawSelection()
+        continue
+      }
+      if (a.kind === 'strokeEnd') {
+        sel.up(vp)
+        redrawSelection()
+        continue
+      }
+      if (a.kind === 'strokeCancel') {
+        sel.cancel()
+        redrawSelection()
+        continue
+      }
+      if (a.kind === 'hover') continue // keep the selection overlay on screen
+    }
     switch (a.kind) {
       case 'strokeStart': {
         if (editing) {
@@ -394,10 +449,11 @@ function applyActions(actions: RouterAction[]): void {
 
 /** True while any stroke / eraser / shape / text session is open; undo and redo are blocked then. */
 const sessionActive = (): boolean =>
-  !!(current || eraseSession || areaSession || shapeDrag || textDrag || editing)
+  !!(current || eraseSession || areaSession || shapeDrag || textDrag || editing || sel.busy)
 
 function undoRedo(redo: boolean): void {
   if (sessionActive()) return
+  clearSelection()
   if (redo) history.redo()
   else history.undo()
   renderer.requestDraw()
@@ -433,7 +489,9 @@ const toolbar = mountToolbar(
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'hidden') return
   textDrag = null // a text tap cut short by hiding must not pop an editor open
+  sel.cancel()
   applyActions(router.reset())
+  clearSelection()
 })
 
 for (const type of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'pointerleave'] as const) {
@@ -489,6 +547,9 @@ function resetSessions(): void {
   eraseSession = null
   current = null
   snap.cancel()
+  sel.cancel()
+  sel.clear()
+  renderer.setHidden(sel.hidden)
   live.clear()
 }
 
@@ -585,6 +646,8 @@ async function openBoard(id: string): Promise<boolean> {
     doc = new BoardDoc()
     for (const o of objects) doc.add(o) // load first, THEN subscribe autosave, so loading doesn't re-save everything
     history = new History(doc)
+    sel = new SelectionController(doc, (c) => history.apply(c))
+    renderer.setHidden(sel.hidden)
     renderer.setDoc(doc)
     const autosave = new Autosave(db, meta.id, showStatus, objects.map((o) => o.id))
     const unwire = wireAutosave(doc, autosave, () => commitOpenEdit?.())

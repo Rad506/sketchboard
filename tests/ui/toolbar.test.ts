@@ -59,4 +59,16 @@ describe('toolbar', () => {
     t.btn('shapes').click()
     expect(menu.hidden).toBe(true)
   })
+
+  it('renders a Lasso button, pressed when the lasso is active', () => {
+    const t = setup({ tool: 'lasso', lastPen: 'ink' })
+    expect(t.btn('lasso').getAttribute('aria-label')).toBe('Lasso')
+    expect(t.btn('lasso').getAttribute('aria-pressed')).toBe('true')
+    expect(t.btn('text').getAttribute('aria-pressed')).toBe('false')
+    t.set({ tool: 'ink', lastPen: 'ink' })
+    t.tb.refresh()
+    expect(t.btn('lasso').getAttribute('aria-pressed')).toBe('false')
+    t.btn('lasso').click()
+    expect(t.onSelect).toHaveBeenCalledWith('lasso')
+  })
 })
