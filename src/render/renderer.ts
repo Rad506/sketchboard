@@ -41,6 +41,7 @@ export class Renderer {
 
   /** Ids not to draw (objects being moved/resized are shown on the live layer instead). */
   setHidden(ids: Set<string>): void {
+    if (ids.size === this.hidden.size && [...ids].every((id) => this.hidden.has(id))) return
     this.hidden = new Set(ids)
     this.requestDraw()
   }
