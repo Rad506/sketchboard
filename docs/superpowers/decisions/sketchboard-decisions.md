@@ -28,3 +28,22 @@ Infinite-board drawing app for Galaxy S25 Ultra + S Pen.
 | 17 | Zoom out | Practically unlimited zoom-out; huge objects/queries bypass the spatial grid | Enrico asked | ✅ |
 | 18 | Line size vs zoom | Pen/text sizes are fixed board px (8 px stays 8 px on the board at any zoom); the brief screen-px-÷-zoom experiment was reverted | Enrico asked | ✅ |
 | 19 | Handwriting → text | Not doing it (parked) | Enrico: "leave the writing to text" | ✅ |
+
+## Lasso select & transform (2026-11-11) — approved by Enrico
+
+| # | Question | Chosen | Rationale | Tag |
+|---|---|---|---|---|
+| L1 | How to start a selection | New **Lasso** button in the toolbar (next to Text). Draw a free loop around what you want; lifting the pen closes the loop automatically (straight line back to the start) | Matches OneNote; no need to land exactly on the start point | 🟡 |
+| L2 | What counts as "inside" | An object is selected when **most of it (≥ 60 % of its points)** is inside the loop; text when its centre is inside. A loop smaller than ~20 px selects nothing | Forgiving for loops that clip a stroke's tail, like OneNote | 🟢 |
+| L3 | What can be selected | Everything: ink, felt, highlighter, shapes, arrows, text | "Drawn lines" plus the rest behave the same | 🟢 |
+| L4 | Selection look | Dashed box around the selection, a round **move** button in the centre, **4 corner** squares, **4 side-centre** squares; handles are ≥ 44 px touch targets, same size at any zoom | Your description | 🟢 |
+| L5 | Corners | Resize with the **aspect ratio locked**, anchored at the opposite corner | You asked | ✅ |
+| L6 | Side-centre handles | **Stretch in one direction** (left/right handles change width, top/bottom change height), anchored at the opposite side | Enrico confirmed | ✅ |
+| L7 | Moving | Drag the centre move button **or anywhere inside the box** | Bigger target, fewer misses | 🟡 |
+| L8 | Line thickness when resizing | Corner (uniform) resize scales line width and text size with it; one-way stretch keeps line width as is and moves text without stretching the letters | Lines look natural; stretched text would look broken | 🟡 |
+| L9 | Live feedback | While dragging, the selection redraws live at its new position/size; the originals are hidden, not deleted, until you let go | No flicker, and nothing can be lost if the app is closed mid-drag | 🟢 |
+| L10 | Undo | One move/resize = one undo step; drawing the loop itself is not an undo step | Same as erasers | 🟢 |
+| L11 | Ending a selection | Tap outside the box, pick another tool, or use the S Pen side button. The selection stays active between drags so you can move, then resize, then move again | Like OneNote | 🟢 |
+| L12 | Fingers | Pen or finger can use the handles; with the pen hovering, fingers stay inert (existing palm rule) | Consistent with one-finger pan rule | 🟢 |
+| L13 | Out of scope (v1) | Rotate, copy/duplicate, delete-selection button, recolour selection | Not asked; delete is covered by the erasers | 🟡 |
+| L14 | Code layout | New `src/tools/lasso.ts` (pure selection + transform maths) and `src/tools/selectionController.ts` (gesture state), so `main.ts` (762 lines) doesn't grow much | Keeps files focused and testable | 🟢 |
