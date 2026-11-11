@@ -13,6 +13,9 @@ const ev = (
 ): RouterEvent => ({ type, pointerId, pointerType, x, y, pressure, buttons, t: ++t });
 
 const mk = (fingerDraw = false) => new InputRouter({ fingerDraw: () => fingerDraw });
+/** fingerDraw off; a finger landing exactly on (10, 10) claims the selection. */
+const mkClaim = (claim = true) =>
+  new InputRouter({ fingerDraw: () => false, claimTouch: (x, y) => claim && x === 10 && y === 10 });
 
 describe('InputRouter', () => {
   it('pen contact emits strokeStart/Move/End', () => {
@@ -182,5 +185,33 @@ describe('InputRouter', () => {
     r.reset();
     // fresh finger after reset starts a stroke again (no stale touch count)
     expect(r.handle(ev('pointerdown', 3, 'touch', 7, 7))[0]).toMatchObject({ kind: 'strokeStart' });
+  });
+  it('claimTouch: a finger landing on the claimed spot draws (strokeStart/Move) instead of panning', () => {
+    const r = mkClaim(true);
+    expect(r.handle(ev('pointerdown', 1, 'touch', 10, 10))[0]).toMatchObject({ kind: 'strokeStart', x: 10, y: 10, p: 0.5 });
+    expect(r.handle(ev('pointermove', 1, 'touch', 30, 25))).toEqual([expect.objectContaining({ kind: 'strokeMove', x: 30, y: 25, p: 0.5 })]);
+    expect(r.handle(ev('pointerup', 1, 'touch', 30, 25, 0, 0))[0]).toMatchObject({ kind: 'strokeEnd' });
+  });
+
+  it('claimTouch false: the same finger pans', () => {
+    const r = mkClaim(false);
+    expect(r.handle(ev('pointerdown', 1, 'touch', 10, 10))).toEqual([]);
+    expect(r.handle(ev('pointermove', 1, 'touch', 30, 25))).toEqual([{ kind: 'pan', dx: 20, dy: 15 }]);
+  });
+
+  it('claimTouch: while the pen hovers a claimed finger is still inert', () => {
+    const r = mkClaim(true);
+    r.handle(ev('pointermove', 2, 'pen', 300, 300, 0, 0));
+    expect(r.handle(ev('pointerdown', 1, 'touch', 10, 10))).toEqual([]);
+    expect(r.handle(ev('pointermove', 1, 'touch', 40, 40))).toEqual([]);
+  });
+
+  it('claimTouch: a second finger mid-claim gives strokeCancel then a pinch', () => {
+    const r = mkClaim(true);
+    r.handle(ev('pointerdown', 1, 'touch', 10, 10));
+    r.handle(ev('pointermove', 1, 'touch', 20, 20));
+    expect(r.handle(ev('pointerdown', 2, 'touch', 100, 20))).toEqual([{ kind: 'strokeCancel' }]);
+    const m = r.handle(ev('pointermove', 2, 'touch', 120, 20));
+    expect(m.map((a) => a.kind).sort()).toEqual(['pan', 'zoom']);
   });
 });

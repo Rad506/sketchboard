@@ -32,7 +32,7 @@ export class InputRouter {
   private penPointers = new Set<number>();
   private penSeenT = -Infinity;
 
-  constructor(private opts: { fingerDraw: () => boolean }) {}
+  constructor(private opts: { fingerDraw: () => boolean; claimTouch?: (x: number, y: number) => boolean }) {}
 
   handle(e: RouterEvent): RouterAction[] {
     if (e.pointerType === 'pen') this.trackPen(e);
@@ -144,7 +144,7 @@ export class InputRouter {
     if (e.type === 'pointerdown') {
       this.touches.set(id, { x: e.x, y: e.y });
       if (this.touches.size === 1) {
-        if (this.opts.fingerDraw()) {
+        if (this.opts.fingerDraw() || this.opts.claimTouch?.(e.x, e.y) === true) {
           this.mode = 'touchDraw';
           this.touchDrawId = id;
           out.push({ kind: 'strokeStart', x: e.x, y: e.y, p: 0.5, t: e.t });
