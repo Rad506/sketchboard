@@ -69,6 +69,16 @@ describe('LiveLayer', () => {
       expect(ctx.fillRect).toHaveBeenCalledTimes(4)
       expect(ctx.arc).toHaveBeenCalledTimes(1)
     })
+    it('closes the loop path when it has 3+ points', () => {
+      const { l, ctx } = setup()
+      l.drawSelection({ loop: [[0, 0], [50, 0], [50, 50]], preview: [], box: null })
+      expect(ctx.closePath).toHaveBeenCalledTimes(1)
+    })
+    it('does not close a 2-point loop', () => {
+      const { l, ctx } = setup()
+      l.drawSelection({ loop: [[0, 0], [50, 0]], preview: [], box: null })
+      expect(ctx.closePath).not.toHaveBeenCalled()
+    })
     it('draws the loop dashed', () => {
       const { l, ctx } = setup()
       l.drawSelection({ loop: [[0, 0], [50, 0], [50, 50]], preview: [], box: null })

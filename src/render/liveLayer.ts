@@ -107,6 +107,7 @@ export class LiveLayer {
       c.beginPath()
       c.moveTo(s.loop[0][0], s.loop[0][1])
       for (let i = 1; i < s.loop.length; i++) c.lineTo(s.loop[i][0], s.loop[i][1])
+      if (s.loop.length >= 3) c.closePath()
       c.lineWidth = 1.5 / zoom
       c.strokeStyle = SEL_BLUE
       c.setLineDash([6 / zoom, 4 / zoom])
